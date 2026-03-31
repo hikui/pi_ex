@@ -8,6 +8,7 @@ An Elixir port of [pi-mono](https://github.com/badlogic/pi-mono)'s `ai` and `age
 
 - **`PiEx.AI`** — Streaming and synchronous LLM completions. Currently supports OpenAI.
 - **`PiEx.Agent`** — Stateful GenServer-backed agent with tool execution, steering, and event subscriptions.
+- **`PiEx.DeepAgent`** — Pre-configured agent with 6 built-in file-system tools, sandboxed to a project root.
 
 ## Requirements
 
@@ -142,7 +143,81 @@ config = %PiEx.Agent.Config{model: model, tools: [weather_tool]}
 }
 ```
 
+## PiEx.DeepAgent — File-system agent
+
+A pre-configured agent harness that wraps `PiEx.Agent` with 6 built-in LLM tools for reading
+and modifying a software project. All file operations are sandboxed to a `project_root` directory.
+Uses ripgrep (`rg`) for grep/find when available. Serializes concurrent writes per file via a
+`FileMutex` GenServer.
+
+```elixir
+config = %PiEx.DeepAgent.Config{
+  model: PiEx.AI.Model.new("gpt-4o", "openai"),
+  project_root: "/path/to/project"
+}
+
+{:ok, agent} = PiEx.DeepAgent.start(config)
+PiEx.Agent.subscribe(agent)
+:ok = PiEx.Agent.prompt(agent, "List the top-level files and summarize what this project does.")
+```
+
+All further interaction uses the standard `PiEx.Agent.*` API.
+
+### Built-in tools
+
+| Tool | Description |
+|---|---|
+| `ls` | List directory contents; appends `/` to dirs; filters `.gitignore` entries |
+| `find` | Find files by glob pattern via `rg --files`; falls back to `Path.wildcard` |
+| `read` | Read a file with line numbers; supports `offset` and `limit` |
+| `grep` | Search file contents via `rg`; supports `ignore_case`, `literal`, `context`, `glob` |
+| `write` | Write content to a file, creating parent directories as needed |
+| `edit` | Apply `old_text → new_text` edits; returns a unified diff |
+
+### DeepAgent config
+
+```elixir
+%PiEx.DeepAgent.Config{
+  model: model,           # required — %PiEx.AI.Model{}
+  project_root: "/path",  # required — sandboxed root; must be an existing directory
+
+  system_prompt: "...",   # nil = use built-in default
+  extra_tools: [tool],    # additional %PiEx.Agent.Tool{} to merge with built-ins
+  api_key: "sk-...",      # overrides env-var API key
+  temperature: 0.7,
+  max_tokens: 4096
+}
+```
+
+### Extra tools
+
+```elixir
+my_tool = %PiEx.Agent.Tool{
+  name: "run_tests",
+  description: "Run the project test suite and return output.",
+  parameters: %{"type" => "object", "properties" => %{}, "required" => []},
+  label: "Run Tests",
+  execute: fn _id, _params, _opts ->
+    {output, _} = System.cmd("mix", ["test"], cd: "/path/to/project")
+    {:ok, %{content: [%PiEx.AI.Content.TextContent{text: output}], details: nil}}
+  end
+}
+
+config = %PiEx.DeepAgent.Config{
+  model: model,
+  project_root: "/path/to/project",
+  extra_tools: [my_tool]
+}
+```
+
+### Requirements
+
+- `diff` (standard Unix utility) — used by the `edit` tool to generate diffs
+- `rg` (ripgrep, optional) — used by `grep` and `find`; `find` falls back to `Path.wildcard` if absent
+
 ### Agent events
+
+
 
 | Event | Description |
 |---|---|
