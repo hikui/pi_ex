@@ -1,0 +1,2 @@
+- Must write unit tests for new and modified code
+- Must follow the Elixir best practice
