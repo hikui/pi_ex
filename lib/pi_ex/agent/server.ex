@@ -22,7 +22,7 @@ defmodule PiEx.Agent.Server do
 
   use GenServer
 
-  alias PiEx.Agent.{Config, Loop}
+  alias PiEx.Agent.{Config, Compaction, Loop}
 
   defstruct [
     :config,
@@ -31,7 +31,8 @@ defmodule PiEx.Agent.Server do
     subscribers: [],
     loop_task: nil,
     steering_queue: [],
-    follow_up_queue: []
+    follow_up_queue: [],
+    compaction_task: nil
   ]
 
   # ---------------------------------------------------------------------------
@@ -97,6 +98,12 @@ defmodule PiEx.Agent.Server do
     GenServer.call(server, :status)
   end
 
+  @doc "Manually trigger compaction regardless of token count. No-op if already compacting or running."
+  @spec compact(pid()) :: :ok | {:error, :already_running}
+  def compact(server) do
+    GenServer.call(server, :compact)
+  end
+
   # ---------------------------------------------------------------------------
   # Callbacks
   # ---------------------------------------------------------------------------
@@ -117,6 +124,11 @@ defmodule PiEx.Agent.Server do
 
   @impl true
   def handle_call({:prompt, _messages}, _from, %{status: :running} = state) do
+    {:reply, {:error, :already_running}, state}
+  end
+
+  @impl true
+  def handle_call({:prompt, _messages}, _from, %{compaction_task: {_, _}} = state) do
     {:reply, {:error, :already_running}, state}
   end
 
@@ -144,6 +156,22 @@ defmodule PiEx.Agent.Server do
   @impl true
   def handle_call(:status, _from, state) do
     {:reply, state.status, state}
+  end
+
+  @impl true
+  def handle_call(:compact, _from, %{status: :running} = state) do
+    {:reply, {:error, :already_running}, state}
+  end
+
+  @impl true
+  def handle_call(:compact, _from, %{compaction_task: {_, _}} = state) do
+    {:reply, {:error, :already_running}, state}
+  end
+
+  @impl true
+  def handle_call(:compact, _from, state) do
+    new_state = force_start_compaction(state)
+    {:reply, :ok, new_state}
   end
 
   @impl true
@@ -183,17 +211,43 @@ defmodule PiEx.Agent.Server do
   def handle_info({:agent_event, event}, state) do
     state = apply_event(event, state)
     broadcast(state.subscribers, {:agent_event, event})
+    state = if match?({:agent_end, _}, event), do: maybe_start_compaction(state), else: state
     {:noreply, state}
   end
 
-  # Task completed normally (async_nolink sends a message with the result)
+  # Compaction completed successfully
+  @impl true
+  def handle_info({:compaction_done, new_messages}, state) do
+    broadcast(state.subscribers, {:agent_event, {:compaction_end, hd(new_messages)}})
+    {:noreply, %{state | messages: new_messages, compaction_task: nil}}
+  end
+
+  # Compaction failed
+  @impl true
+  def handle_info({:compaction_error, reason}, state) do
+    broadcast(state.subscribers, {:agent_event, {:compaction_error, reason}})
+    {:noreply, %{state | compaction_task: nil}}
+  end
+
+  # Loop task completed normally (async_nolink sends a message with the result)
   @impl true
   def handle_info({ref, _result}, %{loop_task: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
     {:noreply, %{state | status: :idle, loop_task: nil}}
   end
 
-  # Task crashed
+  # Compaction task exited (start_child monitors send :DOWN on exit, both normal and crash)
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, reason}, %{compaction_task: {task_pid, _}} = state)
+      when task_pid == pid do
+    if reason != :normal do
+      broadcast(state.subscribers, {:agent_event, {:compaction_error, reason}})
+    end
+
+    {:noreply, %{state | compaction_task: nil}}
+  end
+
+  # Loop task crashed
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, reason}, %{loop_task: task} = state)
       when task != nil and task.pid == pid do
@@ -225,6 +279,41 @@ defmodule PiEx.Agent.Server do
 
   defp broadcast(subscribers, message) do
     Enum.each(subscribers, &send(&1, message))
+  end
+
+  defp maybe_start_compaction(%{config: %{compaction: nil}} = state), do: state
+  defp maybe_start_compaction(%{config: %{model: %{context_window: nil}}} = state), do: state
+
+  defp maybe_start_compaction(state) do
+    %{messages: messages, config: config} = state
+    estimate = Compaction.estimate_context_tokens(messages)
+
+    if Compaction.should_compact?(estimate.tokens, config.model.context_window, config.compaction) do
+      start_compaction_task(state)
+    else
+      state
+    end
+  end
+
+  defp force_start_compaction(%{config: %{compaction: nil}} = state), do: state
+  defp force_start_compaction(state), do: start_compaction_task(state)
+
+  defp start_compaction_task(state) do
+    %{messages: messages, config: config} = state
+    server_pid = self()
+    compact_fn = config.compact_fn || (&Compaction.compact(&1, &2, &3, &4))
+
+    {:ok, task_pid} =
+      Task.Supervisor.start_child(PiEx.TaskSupervisor, fn ->
+        case compact_fn.(messages, config.model, config.compaction, config.api_key) do
+          {:ok, new_messages} -> send(server_pid, {:compaction_done, new_messages})
+          {:error, reason} -> send(server_pid, {:compaction_error, reason})
+        end
+      end)
+
+    monitor_ref = Process.monitor(task_pid)
+    broadcast(state.subscribers, {:agent_event, :compaction_start})
+    %{state | compaction_task: {task_pid, monitor_ref}}
   end
 
   # Inject queue-polling hooks so the loop can call back into this GenServer

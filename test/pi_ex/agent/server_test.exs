@@ -327,4 +327,205 @@ defmodule PiEx.Agent.ServerTest do
       assert AssistantMessage in roles
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Compaction
+  # ---------------------------------------------------------------------------
+
+  describe "compaction" do
+    defp compaction_config(stream_fn, compact_fn) do
+      alias PiEx.Agent.Compaction.Settings
+
+      %PiEx.Agent.Config{
+        model: %PiEx.AI.Model{id: "test-model", provider: "openai", context_window: 100},
+        stream_fn: fn _model, _ctx, _opts -> stream_fn.() end,
+        compaction: %Settings{enabled: true, reserve_tokens: 50, keep_recent_tokens: 10},
+        compact_fn: compact_fn
+      }
+    end
+
+    defp high_usage_stream(text) do
+      # Return an AssistantMessage with high token usage to trigger compaction
+      partial_done = %AssistantMessage{
+        content: [%TextContent{text: text}],
+        model: "test",
+        usage: %Usage{input_tokens: 80, output_tokens: 10},
+        stop_reason: :stop,
+        timestamp: 0
+      }
+
+      [
+        {:start, partial_done},
+        {:text_start, 0, partial_done},
+        {:text_delta, 0, text, partial_done},
+        {:text_end, 0, text, partial_done},
+        {:done, :stop, partial_done}
+      ]
+    end
+
+    test "broadcasts compaction_start and compaction_end after agent_end" do
+      alias PiEx.AI.Message.CompactionSummaryMessage
+      test_pid = self()
+
+      summary_msg = %CompactionSummaryMessage{
+        summary: "previous work summary",
+        tokens_before: 90,
+        timestamp: 0
+      }
+
+      compact_fn = fn _messages, _model, _settings, _api_key ->
+        send(test_pid, :compact_fn_called)
+        {:ok, [summary_msg]}
+      end
+
+      pid = start_agent!(compaction_config(fn -> high_usage_stream("result") end, compact_fn))
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      assert_receive :compact_fn_called, 3000
+      assert_receive {:agent_event, :compaction_start}, 3000
+      assert_receive {:agent_event, {:compaction_end, %CompactionSummaryMessage{}}}, 3000
+    end
+
+    test "get_messages returns compacted list after compaction_end" do
+      alias PiEx.AI.Message.CompactionSummaryMessage
+
+      summary_msg = %CompactionSummaryMessage{
+        summary: "compacted history",
+        tokens_before: 90,
+        timestamp: 0
+      }
+
+      compact_fn = fn _messages, _model, _settings, _api_key ->
+        {:ok, [summary_msg]}
+      end
+
+      pid = start_agent!(compaction_config(fn -> high_usage_stream("done") end, compact_fn))
+      Server.subscribe(pid)
+      Server.prompt(pid, "hello")
+
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      assert_receive {:agent_event, {:compaction_end, _}}, 3000
+
+      messages = Server.get_messages(pid)
+      assert [%CompactionSummaryMessage{summary: "compacted history"} | _] = messages
+    end
+
+    test "prompt returns :error when compaction is in progress" do
+      alias PiEx.AI.Message.CompactionSummaryMessage
+      test_pid = self()
+
+      compact_fn = fn _messages, _model, _settings, _api_key ->
+        # Signal the test we're inside compaction, then block briefly
+        send(test_pid, :compacting)
+        Process.sleep(200)
+        {:ok, [%CompactionSummaryMessage{summary: "done", tokens_before: 90, timestamp: 0}]}
+      end
+
+      pid = start_agent!(compaction_config(fn -> high_usage_stream("hi") end, compact_fn))
+      Server.subscribe(pid)
+      Server.prompt(pid, "first")
+
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      assert_receive :compacting, 3000
+
+      assert {:error, :already_running} = Server.prompt(pid, "second")
+
+      # Let compaction finish
+      assert_receive {:agent_event, {:compaction_end, _}}, 3000
+    end
+
+    test "compaction_error is broadcast when compact_fn returns error" do
+      compact_fn = fn _messages, _model, _settings, _api_key ->
+        {:error, :summarization_failed}
+      end
+
+      pid = start_agent!(compaction_config(fn -> high_usage_stream("hi") end, compact_fn))
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      assert_receive {:agent_event, {:compaction_error, :summarization_failed}}, 3000
+    end
+
+    test "no compaction when tokens are below threshold" do
+      # Use low-usage stream so tokens don't exceed context_window - reserve
+      pid =
+        start_agent!(
+          compaction_config(
+            fn -> text_stream("small reply") end,
+            fn _msgs, _m, _s, _k -> flunk("compact_fn should not be called") end
+          )
+        )
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "hi")
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+
+      # Give a moment to confirm no compaction fires
+      refute_receive {:agent_event, :compaction_start}, 200
+    end
+
+    test "manual compact/1 triggers compaction regardless of token count" do
+      alias PiEx.AI.Message.CompactionSummaryMessage
+      test_pid = self()
+
+      compact_fn = fn _messages, _model, _settings, _api_key ->
+        send(test_pid, :compact_fn_called)
+        {:ok, [%CompactionSummaryMessage{summary: "manual", tokens_before: 0, timestamp: 0}]}
+      end
+
+      pid =
+        start_agent!(
+          compaction_config(
+            fn -> text_stream("reply") end,
+            compact_fn
+          )
+        )
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "hi")
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+
+      # First compaction from high_usage_stream won't trigger (text_stream has low usage)
+      refute_receive {:agent_event, :compaction_start}, 200
+
+      # Manual trigger
+      :ok = Server.compact(pid)
+      assert_receive :compact_fn_called, 3000
+      assert_receive {:agent_event, :compaction_start}, 3000
+      assert_receive {:agent_event, {:compaction_end, _}}, 3000
+    end
+
+    test "no compaction when compaction config is nil" do
+      pid =
+        start_agent!(%PiEx.Agent.Config{
+          model: %PiEx.AI.Model{id: "test", provider: "openai", context_window: 100},
+          stream_fn: fn _m, _c, _o -> high_usage_stream("hi") end,
+          compaction: nil
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "hello")
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      refute_receive {:agent_event, :compaction_start}, 200
+    end
+
+    test "no compaction when model has no context_window" do
+      alias PiEx.Agent.Compaction.Settings
+
+      pid =
+        start_agent!(%PiEx.Agent.Config{
+          model: %PiEx.AI.Model{id: "test", provider: "openai", context_window: nil},
+          stream_fn: fn _m, _c, _o -> high_usage_stream("hi") end,
+          compaction: %Settings{enabled: true, reserve_tokens: 50, keep_recent_tokens: 10}
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "hello")
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      refute_receive {:agent_event, :compaction_start}, 200
+    end
+  end
 end

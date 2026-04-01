@@ -25,6 +25,12 @@ defmodule PiEx.Agent.Config do
     Called just before each LLM call. Use for pruning or injecting context.
   - `:convert_to_llm` — `([AgentMessage.t()]) -> [Message.t()]`
     Converts the agent message list to LLM-level messages. Default: identity.
+
+  ## Compaction (optional)
+  - `:compaction` — `%PiEx.Agent.Compaction.Settings{}` to enable auto compaction; `nil` disables it (default).
+    Requires `:model` to have a `context_window` set.
+  - `:compact_fn` — override the compaction implementation. Receives `(messages, model, settings, api_key)`
+    and must return `{:ok, new_messages}` or `{:error, reason}`. Useful for testing without real API calls.
   """
 
   alias PiEx.AI.Model
@@ -43,7 +49,9 @@ defmodule PiEx.Agent.Config do
     get_follow_up_messages: nil,
     transform_context: nil,
     convert_to_llm: nil,
-    stream_fn: nil
+    stream_fn: nil,
+    compaction: nil,
+    compact_fn: nil
   ]
 
   @type t :: %__MODULE__{
@@ -59,6 +67,11 @@ defmodule PiEx.Agent.Config do
           get_follow_up_messages: (() -> [PiEx.AI.Message.t()]) | nil,
           transform_context: ((PiEx.AI.Context.t()) -> PiEx.AI.Context.t()) | nil,
           convert_to_llm: (([PiEx.AI.Message.t()]) -> [PiEx.AI.Message.t()]) | nil,
-          stream_fn: ((PiEx.AI.Model.t(), PiEx.AI.Context.t(), keyword()) -> Enumerable.t()) | nil
+          stream_fn: ((PiEx.AI.Model.t(), PiEx.AI.Context.t(), keyword()) -> Enumerable.t()) | nil,
+          compaction: PiEx.Agent.Compaction.Settings.t() | nil,
+          compact_fn:
+            (([PiEx.AI.Message.t()], PiEx.AI.Model.t(), PiEx.Agent.Compaction.Settings.t(), String.t() | nil) ->
+               {:ok, [PiEx.AI.Message.t()]} | {:error, term()})
+            | nil
         }
 end

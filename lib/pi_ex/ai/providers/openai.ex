@@ -7,7 +7,7 @@ defmodule PiEx.AI.Providers.OpenAI do
   """
 
   alias PiEx.AI.Content.{TextContent, ThinkingContent, ToolCall}
-  alias PiEx.AI.Message.{UserMessage, AssistantMessage, ToolResultMessage, Usage}
+  alias PiEx.AI.Message.{UserMessage, AssistantMessage, ToolResultMessage, CompactionSummaryMessage, Usage}
   alias PiEx.AI.Model
   alias PiEx.AI.Context
 
@@ -441,6 +441,10 @@ defmodule PiEx.AI.Providers.OpenAI do
 
     user_messages = Enum.flat_map(messages, &convert_message/1)
     system ++ user_messages
+  end
+
+  defp convert_message(%CompactionSummaryMessage{summary: summary}) do
+    [%{role: "user", content: "[Context Summary]\n\n#{summary}"}]
   end
 
   defp convert_message(%UserMessage{content: content}) when is_binary(content) do

@@ -73,6 +73,10 @@ defmodule PiEx.Agent do
   @spec status(pid()) :: :idle | :running
   defdelegate status(server), to: Server
 
+  @doc "Manually trigger compaction on the current message history. No-op if compaction is not configured."
+  @spec compact(pid()) :: :ok | {:error, :already_running}
+  defdelegate compact(server), to: Server
+
   @doc "Stop the agent process."
   @spec stop(pid()) :: :ok | {:error, :not_found}
   defdelegate stop(server), to: Supervisor, as: :stop_agent

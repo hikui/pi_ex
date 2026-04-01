@@ -54,7 +54,19 @@ defmodule PiEx.AI.Message do
           }
   end
 
-  @type t :: UserMessage.t() | AssistantMessage.t() | ToolResultMessage.t()
+  defmodule CompactionSummaryMessage do
+    @moduledoc "A synthetic message injected after compaction, summarizing prior context."
+    @enforce_keys [:summary, :tokens_before, :timestamp]
+    defstruct [:summary, :tokens_before, :timestamp]
+
+    @type t :: %__MODULE__{
+            summary: String.t(),
+            tokens_before: non_neg_integer(),
+            timestamp: integer()
+          }
+  end
+
+  @type t :: UserMessage.t() | AssistantMessage.t() | ToolResultMessage.t() | CompactionSummaryMessage.t()
 
   @doc "Build a UserMessage with the current timestamp."
   @spec user(String.t() | [Content.user_block()]) :: UserMessage.t()
