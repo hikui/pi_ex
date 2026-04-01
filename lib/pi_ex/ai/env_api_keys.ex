@@ -2,7 +2,8 @@ defmodule PiEx.AI.EnvApiKeys do
   @moduledoc "Maps provider names to their environment variable API keys."
 
   @provider_env_vars %{
-    "openai" => "OPENAI_API_KEY"
+    "openai" => "OPENAI_API_KEY",
+    "litellm" => "LITELLM_API_KEY"
   }
 
   @doc """

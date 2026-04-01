@@ -18,6 +18,7 @@ defmodule PiEx.AI.Providers.OpenAI do
 
   Options:
   - `:api_key` — overrides `OPENAI_API_KEY` env var
+  - `:base_url` — overrides the default OpenAI base URL (useful for OpenAI-compatible proxies like LiteLLM)
   - `:temperature` — float (default: model default)
   - `:max_tokens` — integer
   - `:system_prompt` — prepended as a system message (overrides `context.system_prompt`)
@@ -104,7 +105,8 @@ defmodule PiEx.AI.Providers.OpenAI do
         plug -> Keyword.put(req_opts, :plug, plug)
       end
 
-    result = Req.post("#{@base_url}/chat/completions", req_opts)
+    base_url = Keyword.get(opts, :base_url, @base_url)
+    result = Req.post("#{base_url}/chat/completions", req_opts)
 
     case result do
       {:ok, %{status: status}} when status in 200..299 ->

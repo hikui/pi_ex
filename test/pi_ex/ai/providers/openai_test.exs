@@ -301,6 +301,33 @@ defmodule PiEx.AI.Providers.OpenAITest do
   end
 
   # ---------------------------------------------------------------------------
+  # Custom base_url
+  # ---------------------------------------------------------------------------
+
+  describe "stream/3 - custom base_url" do
+    test "uses the provided :base_url for the request" do
+      received = :ets.new(:received_url, [:set, :public])
+
+      Req.Test.stub(OpenAICustomBaseUrl, fn conn ->
+        :ets.insert(received, {:path, conn.request_path})
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, "data: [DONE]\n\n")
+      end)
+
+      OpenAI.stream(model(), context(),
+        plug: {Req.Test, OpenAICustomBaseUrl},
+        base_url: "http://custom-litellm-host/v1"
+      )
+      |> Enum.to_list()
+
+      [{:path, path}] = :ets.lookup(received, :path)
+      assert path == "/v1/chat/completions"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Integration test (only when API key is available)
   # ---------------------------------------------------------------------------
 

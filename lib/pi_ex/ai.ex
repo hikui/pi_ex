@@ -24,7 +24,8 @@ defmodule PiEx.AI do
   alias PiEx.AI.Message.Usage
 
   @providers %{
-    "openai" => PiEx.AI.Providers.OpenAI
+    "openai" => PiEx.AI.Providers.OpenAI,
+    "litellm" => PiEx.AI.Providers.LiteLLM
   }
 
   @doc """
