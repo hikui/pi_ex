@@ -16,6 +16,7 @@ defmodule PiEx.DeepAgent.Tools.Read do
   @spec tool(String.t(), keyword()) :: Tool.t()
   def tool(project_root, opts \\ []) do
     allowed_paths = Keyword.get(opts, :allowed_paths, [])
+
     %Tool{
       name: "read",
       label: "Read File",
@@ -29,7 +30,8 @@ defmodule PiEx.DeepAgent.Tools.Read do
         "properties" => %{
           "path" => %{
             "type" => "string",
-            "description" => "File path to read (relative to project root)."
+            "description" =>
+              "File path to read. Use a relative path for project files, or an exact absolute path when reading an allowlisted skill file."
           },
           "offset" => %{
             "type" => "integer",

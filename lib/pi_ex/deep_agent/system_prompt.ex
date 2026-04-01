@@ -23,7 +23,7 @@ defmodule PiEx.DeepAgent.SystemPrompt do
     base = """
     You are a general-purpose AI agent with access to tools that let you read and modify
     a software project. You operate within a sandboxed project directory and all file paths
-    are relative to the project root.
+    for project files are relative to the project root.
 
     ## Available tools
 
@@ -32,7 +32,7 @@ defmodule PiEx.DeepAgent.SystemPrompt do
     ## Guidelines
 
     - Prefer `read`, `grep`, and `find` for discovery before making changes.
-    - All paths must be relative to the project root.
+    - Use relative paths for project files inside the sandboxed project root.
     - Avoid unnecessary writes; only write when explicitly required.
     - When editing, use the `edit` tool rather than rewriting entire files.
     - Always verify a file exists before attempting to edit it.
@@ -75,6 +75,9 @@ defmodule PiEx.DeepAgent.SystemPrompt do
         <available_skills>
         #{skill_entries}
         </available_skills>
+
+        Skill `<location>` values are absolute file paths. Pass the `<location>` to the \
+        `read` tool exactly as written when loading a skill file.
 
         When a task matches a skill's description, use the `read` tool to load the \
         SKILL.md file at its `<location>` and follow its instructions.\

@@ -55,5 +55,22 @@ defmodule PiEx.DeepAgent.Tools.ReadTest do
       assert {:error, "path is outside project root"} =
                Read.execute(%{path: "../outside.txt"}, dir)
     end
+
+    test "reads an allowlisted absolute skill path outside project root", %{dir: dir} do
+      skill_dir =
+        System.tmp_dir!()
+        |> Path.join("read_skill_test_#{:erlang.unique_integer([:positive])}")
+
+      File.mkdir_p!(skill_dir)
+      on_exit(fn -> File.rm_rf!(skill_dir) end)
+
+      skill_path = Path.join(skill_dir, "SKILL.md")
+      File.write!(skill_path, "---\nname: test-skill\ndescription: Reads skill\n---\n")
+
+      assert {:ok, result} =
+               Read.execute(%{path: skill_path}, dir, allowed_paths: [skill_path])
+
+      assert result =~ "name: test-skill"
+    end
   end
 end

@@ -66,6 +66,37 @@ defmodule Example.SkillsDemo do
     messages
   end
 
+  @doc false
+  def render_state do
+    %{thinking_open?: false}
+  end
+
+  @doc false
+  def render_thinking_start(%{thinking_open?: true} = state), do: state
+
+  def render_thinking_start(state) do
+    IO.puts("\n[Thinking ▶]")
+    %{state | thinking_open?: true}
+  end
+
+  @doc false
+  def render_thinking_delta(state, delta) do
+    state
+    |> render_thinking_start()
+    |> then(fn next_state ->
+      IO.write(delta)
+      next_state
+    end)
+  end
+
+  @doc false
+  def render_thinking_end(%{thinking_open?: false} = state), do: state
+
+  def render_thinking_end(state) do
+    IO.puts("\n[Thinking ◀]")
+    %{state | thinking_open?: false}
+  end
+
   # ---------------------------------------------------------------------------
   # Prompt
   # ---------------------------------------------------------------------------
@@ -85,50 +116,47 @@ defmodule Example.SkillsDemo do
   # Prints every meaningful agent event so the terminal shows the full
   # picture: thinking blocks, streamed text deltas, tool calls with their
   # arguments and results, and the final completion.
-  defp collect_events do
+  defp collect_events(state \\ render_state()) do
     receive do
       # ── Lifecycle ──────────────────────────────────────────────────────────
       {:agent_event, :agent_start} ->
         IO.puts("\n━━━ Agent started ━━━\n")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, :turn_start} ->
         IO.puts("\n── Turn start ──")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:turn_end, _msg, []}} ->
         IO.puts("\n── Turn end (no tool calls) ──")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:turn_end, _msg, tool_results}} ->
         IO.puts("\n── Turn end (#{length(tool_results)} tool result(s)) ──")
-        collect_events()
+        collect_events(state)
 
       # ── Thinking deltas ────────────────────────────────────────────────────
       {:agent_event, {:message_update, _msg, {:thinking_start, _idx, _partial}}} ->
-        IO.puts("\n[Thinking ▶]")
-        collect_events()
+        collect_events(render_thinking_start(state))
 
       {:agent_event, {:message_update, _msg, {:thinking_delta, _idx, delta, _partial}}} ->
-        IO.write(delta)
-        collect_events()
+        collect_events(render_thinking_delta(state, delta))
 
       {:agent_event, {:message_update, _msg, {:thinking_end, _idx, _content, _partial}}} ->
-        IO.puts("\n[Thinking ◀]")
-        collect_events()
+        collect_events(render_thinking_end(state))
 
       # ── Text deltas ────────────────────────────────────────────────────────
       {:agent_event, {:message_update, _msg, {:text_start, _idx, _partial}}} ->
         IO.puts("\n[Text ▶]")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:message_update, _msg, {:text_delta, _idx, delta, _partial}}} ->
         IO.write(delta)
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:message_update, _msg, {:text_end, _idx, _content, _partial}}} ->
         IO.puts("\n[Text ◀]")
-        collect_events()
+        collect_events(state)
 
       # ── Tool call streaming ────────────────────────────────────────────────
       {:agent_event, {:message_update, _msg, {:toolcall_end, _idx, tool_call, _partial}}} ->
@@ -136,41 +164,41 @@ defmodule Example.SkillsDemo do
           "\n[Tool call: #{tool_call.name}] args: #{inspect(tool_call.arguments, pretty: true, limit: 10)}"
         )
 
-        collect_events()
+        collect_events(state)
 
       # ── Tool execution ─────────────────────────────────────────────────────
       {:agent_event, {:tool_execution_start, _id, name, args}} ->
         IO.puts("\n[Executing: #{name}] #{inspect(args, limit: 6)}")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:tool_execution_end, _id, name, result, false}} ->
         summary = tool_result_summary(result)
         IO.puts("[Done: #{name}] #{summary}")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:tool_execution_end, _id, name, result, true}} ->
         summary = tool_result_summary(result)
         IO.puts("[ERROR: #{name}] #{summary}")
-        collect_events()
+        collect_events(state)
 
       # ── Compaction ─────────────────────────────────────────────────────────
       {:agent_event, :compaction_start} ->
         IO.puts("\n[Compaction: summarising context…]")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:compaction_end, _msg}} ->
         IO.puts("[Compaction: done]")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:compaction_error, reason}} ->
         IO.puts("[Compaction error: #{inspect(reason)}]")
-        collect_events()
+        collect_events(state)
 
       # ── Errors ─────────────────────────────────────────────────────────────
       {:agent_event, {:message_end, %PiEx.AI.Message.AssistantMessage{error_message: message}}}
       when is_binary(message) ->
         IO.puts("\n[Model error: #{message}]")
-        collect_events()
+        collect_events(state)
 
       {:agent_event, {:agent_error, reason}} ->
         IO.puts("\n[Agent error: #{inspect(reason)}]")
@@ -183,7 +211,7 @@ defmodule Example.SkillsDemo do
 
       # ── Ignore everything else (message_start, message_end, unmatched) ────
       {:agent_event, _other} ->
-        collect_events()
+        collect_events(state)
     after
       300_000 ->
         IO.puts("\n[Timeout — agent did not finish within 5 minutes]")
