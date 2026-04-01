@@ -121,10 +121,10 @@ defmodule PiEx.Agent.Loop do
     context = build_context(messages, config)
 
     stream_opts =
-      []
-      |> maybe_opt(:api_key, config.api_key)
-      |> maybe_opt(:temperature, config.temperature)
-      |> maybe_opt(:max_tokens, config.max_tokens)
+      case PiEx.AI.ProviderParams.to_opts(config.model) do
+        {:ok, opts} -> opts
+        {:error, _reason} -> []
+      end
 
     stream_fn = config.stream_fn || fn m, c, o -> PiEx.AI.stream(m, c, o) end
     stream = stream_fn.(config.model, context, stream_opts)
@@ -322,9 +322,6 @@ defmodule PiEx.Agent.Loop do
 
   defp poll_follow_up_messages(%Config{get_follow_up_messages: nil}), do: []
   defp poll_follow_up_messages(%Config{get_follow_up_messages: f}), do: f.()
-
-  defp maybe_opt(opts, _key, nil), do: opts
-  defp maybe_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp error_tool_result(call_id, tool_name, reason) do
     %ToolResultMessage{

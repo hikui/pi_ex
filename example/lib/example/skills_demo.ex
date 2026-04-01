@@ -29,8 +29,14 @@ defmodule Example.SkillsDemo do
 
       export OPENAI_API_KEY=sk-...
   """
+  alias PiEx.AI.{Model, ProviderParams}
 
-  @model %PiEx.AI.Model{id: "gpt-5.4", provider: "openai_responses"}
+  @model Model.new("gpt-5.4", "openai_responses",
+           provider_params: %ProviderParams.OpenAIResponses{
+             reasoning_effort: "low",
+             reasoning_summary: "auto"
+           }
+         )
 
   @doc """
   Start the skills-enabled agent, prompt it to review the codebase,

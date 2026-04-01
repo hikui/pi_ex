@@ -8,9 +8,6 @@ defmodule PiEx.Agent.Config do
 
   ## Optional fields
   - `:tools` — list of `%PiEx.Agent.Tool{}`; default `[]`
-  - `:api_key` — override the env-var API key
-  - `:temperature` — float
-  - `:max_tokens` — integer
 
   ## Hooks (all optional)
   - `:before_tool_call` — `(call_id, tool_name, args) -> :ok | {:block, reason_string}`
@@ -39,9 +36,6 @@ defmodule PiEx.Agent.Config do
   defstruct [
     :model,
     :system_prompt,
-    :api_key,
-    :temperature,
-    :max_tokens,
     tools: [],
     before_tool_call: nil,
     after_tool_call: nil,
@@ -57,20 +51,21 @@ defmodule PiEx.Agent.Config do
   @type t :: %__MODULE__{
           model: Model.t(),
           system_prompt: String.t() | nil,
-          api_key: String.t() | nil,
-          temperature: float() | nil,
-          max_tokens: pos_integer() | nil,
           tools: [PiEx.Agent.Tool.t()],
-          before_tool_call: ((String.t(), String.t(), map()) -> :ok | {:block, String.t()}) | nil,
-          after_tool_call: ((String.t(), String.t(), map()) -> map()) | nil,
-          get_steering_messages: (() -> [PiEx.AI.Message.t()]) | nil,
-          get_follow_up_messages: (() -> [PiEx.AI.Message.t()]) | nil,
-          transform_context: ((PiEx.AI.Context.t()) -> PiEx.AI.Context.t()) | nil,
-          convert_to_llm: (([PiEx.AI.Message.t()]) -> [PiEx.AI.Message.t()]) | nil,
-          stream_fn: ((PiEx.AI.Model.t(), PiEx.AI.Context.t(), keyword()) -> Enumerable.t()) | nil,
+          before_tool_call: (String.t(), String.t(), map() -> :ok | {:block, String.t()}) | nil,
+          after_tool_call: (String.t(), String.t(), map() -> map()) | nil,
+          get_steering_messages: (-> [PiEx.AI.Message.t()]) | nil,
+          get_follow_up_messages: (-> [PiEx.AI.Message.t()]) | nil,
+          transform_context: (PiEx.AI.Context.t() -> PiEx.AI.Context.t()) | nil,
+          convert_to_llm: ([PiEx.AI.Message.t()] -> [PiEx.AI.Message.t()]) | nil,
+          stream_fn: (PiEx.AI.Model.t(), PiEx.AI.Context.t(), keyword() -> Enumerable.t()) | nil,
           compaction: PiEx.Agent.Compaction.Settings.t() | nil,
           compact_fn:
-            (([PiEx.AI.Message.t()], PiEx.AI.Model.t(), PiEx.Agent.Compaction.Settings.t(), String.t() | nil) ->
+            ([PiEx.AI.Message.t()],
+             PiEx.AI.Model.t(),
+             PiEx.Agent.Compaction.Settings.t(),
+             String.t()
+             | nil ->
                {:ok, [PiEx.AI.Message.t()]} | {:error, term()})
             | nil
         }

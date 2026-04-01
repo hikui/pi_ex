@@ -539,15 +539,15 @@ defmodule PiEx.AI.Providers.OpenAIResponses do
   end
 
   defp build_reasoning(opts) do
-    summary = Keyword.get(opts, :reasoning_summary, "auto")
     effort = Keyword.get(opts, :reasoning_effort)
 
-    %{}
-    |> maybe_put(:summary, summary)
-    |> maybe_put(:effort, effort)
-    |> case do
-      map when map == %{} -> nil
-      map -> map
+    case effort do
+      nil ->
+        nil
+
+      effort ->
+        summary = Keyword.get(opts, :reasoning_summary, "auto")
+        %{effort: effort, summary: summary}
     end
   end
 

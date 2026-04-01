@@ -1,21 +1,36 @@
 # Example
 
-**TODO: Add description**
+This project contains runnable demos for `PiEx.Agent` and `PiEx.DeepAgent`.
 
-## Installation
+## Demos
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `example` to your list of dependencies in `mix.exs`:
+- `Example.DeepAgentExample.run/0` — project analyst demo with built-in filesystem tools plus a custom `mix_test` tool
+- `Example.SkillsDemo.run/0` — skills-enabled deep agent demo using `example/skills/`
+- `Example.CompactionDemo.run/0` — auto-context-compaction demo with a tiny context window
 
-```elixir
-def deps do
-  [
-    {:example, "~> 0.1.0"}
-  ]
-end
+## Running
+
+From the `example/` directory:
+
+```bash
+mix deps.get
+mix run -e "Example.DeepAgentExample.run()"
+mix run -e "Example.SkillsDemo.run()"
+mix run -e "Example.CompactionDemo.run()"
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/example>.
+Set `OPENAI_API_KEY` first, or configure `:pi_ex, :openai` in `config/dev.secret.exs`.
 
+The demos use the model-centric provider params API. For example:
+
+```elixir
+alias PiEx.AI.{Model, ProviderParams}
+
+model =
+  Model.new("gpt-5.4", "openai_responses",
+    provider_params: %ProviderParams.OpenAIResponses{
+      reasoning_effort: "low",
+      reasoning_summary: "auto"
+    }
+  )
+```

@@ -42,10 +42,7 @@ defmodule PiEx.DeepAgent do
       agent_config = %PiEx.Agent.Config{
         model: canonical.model,
         system_prompt: system_prompt,
-        tools: all_tools,
-        api_key: canonical.api_key,
-        temperature: canonical.temperature,
-        max_tokens: canonical.max_tokens
+        tools: all_tools
       }
 
       PiEx.Agent.start(agent_config)
@@ -67,6 +64,7 @@ defmodule PiEx.DeepAgent do
   @spec built_in_tools(String.t(), keyword()) :: [PiEx.Agent.Tool.t()]
   def built_in_tools(project_root, opts \\ []) do
     allowed_paths = Keyword.get(opts, :allowed_paths, [])
+
     [
       Ls.tool(project_root),
       Find.tool(project_root),

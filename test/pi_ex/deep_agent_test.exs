@@ -3,6 +3,7 @@ defmodule PiEx.DeepAgentTest do
 
   alias PiEx.DeepAgent
   alias PiEx.DeepAgent.Config
+  alias PiEx.AI.ProviderParams
 
   @model %PiEx.AI.Model{provider: "anthropic", id: "claude-haiku-4-5-20251001"}
 
@@ -22,7 +23,11 @@ defmodule PiEx.DeepAgentTest do
     end
 
     test "returns {:error, _} with non-existent project_root" do
-      config = %Config{model: @model, project_root: "/nonexistent/path/#{:erlang.unique_integer()}"}
+      config = %Config{
+        model: @model,
+        project_root: "/nonexistent/path/#{:erlang.unique_integer()}"
+      }
+
       assert {:error, _reason} = DeepAgent.start(config)
     end
 
@@ -31,6 +36,19 @@ defmodule PiEx.DeepAgentTest do
       File.write!(file_path, "content")
       config = %Config{model: @model, project_root: file_path}
       assert {:error, _reason} = DeepAgent.start(config)
+    end
+
+    test "passes model provider params through to the agent config", %{dir: dir} do
+      params = %ProviderParams.OpenAIResponses{api_key: "sk-openai", reasoning_effort: "low"}
+      model = PiEx.AI.Model.new("gpt-5.4", "openai_responses", provider_params: params)
+
+      config = %Config{model: model, project_root: dir}
+      assert {:ok, pid} = DeepAgent.start(config)
+
+      state = :sys.get_state(pid)
+      assert state.config.model.provider_params == params
+
+      PiEx.Agent.stop(pid)
     end
   end
 
@@ -49,6 +67,7 @@ defmodule PiEx.DeepAgentTest do
     test "system prompt built from built-in tools includes each tool name", %{dir: dir} do
       tools = DeepAgent.built_in_tools(dir)
       prompt = PiEx.DeepAgent.SystemPrompt.build(tools)
+
       for tool <- tools do
         assert prompt =~ tool.name
       end

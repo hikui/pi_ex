@@ -23,11 +23,20 @@ defmodule Example.DeepAgentExample do
       config :pi_ex, :openai, api_key: "sk-..."   # in config/dev.secret.exs
       # or
       export OPENAI_API_KEY=sk-...
+
+  The demo also shows the model-centric provider params API by configuring
+  `reasoning_effort` on `PiEx.AI.Model`.
   """
 
   alias PiEx.DeepAgent.PathGuard
+  alias PiEx.AI.{Model, ProviderParams}
 
-  @model %PiEx.AI.Model{id: "gpt-5.4", provider: "openai_responses"}
+  @model Model.new("gpt-5.4", "openai_responses",
+           provider_params: %ProviderParams.OpenAIResponses{
+             reasoning_effort: "low",
+             reasoning_summary: "auto"
+           }
+         )
 
   @doc """
   Build config, start the agent, subscribe, send the analyst prompt,

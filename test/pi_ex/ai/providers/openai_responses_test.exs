@@ -5,6 +5,7 @@ defmodule PiEx.AI.Providers.OpenAIResponsesTest do
   alias PiEx.AI.Content.{TextContent, ThinkingContent, ToolCall}
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.AI.Providers.OpenAIResponses
+  alias PiEx.AI.ProviderParams
 
   defp model, do: Model.new("gpt-5.4", "openai_responses")
   defp context(text \\ "Hello!"), do: %Context{messages: [Message.user(text)]}
@@ -170,10 +171,15 @@ defmodule PiEx.AI.Providers.OpenAIResponsesTest do
         |> Plug.Conn.send_resp(200, "data: [DONE]\n\n")
       end)
 
-      OpenAIResponses.stream(model(), context(),
-        plug: {Req.Test, OpenAIResponsesRequest},
-        reasoning_effort: "low"
-      )
+      model =
+        Model.new("gpt-5.4", "openai_responses",
+          provider_params: %ProviderParams.OpenAIResponses{
+            reasoning_effort: "low",
+            reasoning_summary: "auto"
+          }
+        )
+
+      PiEx.AI.stream(model, context(), plug: {Req.Test, OpenAIResponsesRequest})
       |> Enum.to_list()
 
       [{:path, path}] = :ets.lookup(received, :path)

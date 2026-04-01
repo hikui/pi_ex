@@ -4,6 +4,7 @@ defmodule PiEx.AITest do
   alias PiEx.AI
   alias PiEx.AI.{Context, Message, Model}
   alias PiEx.AI.Content.ThinkingContent
+  alias PiEx.AI.ProviderParams
 
   defp context(text \\ "Hello!"), do: %Context{messages: [Message.user(text)]}
 
@@ -44,6 +45,17 @@ defmodule PiEx.AITest do
       [event] = AI.stream(Model.new("gpt-5.4", "missing_provider"), context())
       assert {:error, :error, message} = event
       assert message.error_message == "Unknown provider: missing_provider"
+    end
+
+    test "returns an error event for mismatched provider params" do
+      model =
+        Model.new("gpt-5.4", "openai_responses",
+          provider_params: %ProviderParams.OpenAI{temperature: 0.2}
+        )
+
+      [event] = AI.stream(model, context())
+      assert {:error, :error, message} = event
+      assert message.error_message =~ "do not match provider openai_responses"
     end
   end
 end

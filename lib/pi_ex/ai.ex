@@ -19,7 +19,7 @@ defmodule PiEx.AI do
       {:ok, message} = PiEx.AI.complete(model, context)
   """
 
-  alias PiEx.AI.{Model, Context}
+  alias PiEx.AI.{Model, Context, ProviderParams}
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.AI.Message.Usage
 
@@ -36,12 +36,12 @@ defmodule PiEx.AI do
   """
   @spec stream(Model.t(), Context.t(), keyword()) :: Enumerable.t()
   def stream(%Model{provider: provider} = model, %Context{} = context, opts \\ []) do
-    case Map.fetch(@providers, provider) do
-      {:ok, module} ->
-        module.stream(model, context, opts)
-
-      :error ->
-        error_msg = empty_error_message("Unknown provider: #{provider}")
+    with {:ok, model_opts} <- ProviderParams.to_opts(model),
+         {:ok, module} <- fetch_provider(provider) do
+      module.stream(model, context, Keyword.merge(model_opts, opts))
+    else
+      {:error, reason} ->
+        error_msg = empty_error_message(reason)
         [{:error, :error, error_msg}]
     end
   end
@@ -74,5 +74,12 @@ defmodule PiEx.AI do
       timestamp: System.system_time(:millisecond),
       error_message: msg
     }
+  end
+
+  defp fetch_provider(provider) do
+    case Map.fetch(@providers, provider) do
+      {:ok, module} -> {:ok, module}
+      :error -> {:error, "Unknown provider: #{provider}"}
+    end
   end
 end

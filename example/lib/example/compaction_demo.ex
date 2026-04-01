@@ -38,11 +38,7 @@ defmodule Example.CompactionDemo do
     """)
 
     config = %PiEx.Agent.Config{
-      model: %Model{
-        id: "gpt-4o-mini",
-        provider: "openai",
-        context_window: @context_window
-      },
+      model: Model.new("gpt-4o-mini", "openai", context_window: @context_window),
       system_prompt: "You are a helpful assistant. Keep responses under 3 sentences.",
       compaction: %Settings{
         enabled: true,

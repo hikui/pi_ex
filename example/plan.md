@@ -32,7 +32,7 @@ Module: `Example.DeepAgentExample`
 **Structure:**
 ```
 @moduledoc   — scenario overview, what is demonstrated and why
-@model       — module attribute: %PiEx.AI.Model{id: "gpt-4o", provider: "openai"}
+@model       — module attribute built with `PiEx.AI.Model.new/3`
 
 run/0             — public entry point: build config, start agent, subscribe, prompt, collect events
 build_config/1    — private: constructs %PiEx.DeepAgent.Config{} with extra_tools
@@ -102,7 +102,7 @@ This naturally exercises all 6 built-in tools plus the custom tool.
 
 ## Critical APIs (verified from source)
 
-- `%PiEx.AI.Model{id: "gpt-4o", provider: "openai"}` — user-provided OpenAI key
+- `PiEx.AI.Model.new/3` — supports `context_window` and typed `provider_params`
 - `PiEx.DeepAgent.Config.validate/1` — uses `Path.expand` (not `File.real_path!`)
 - `PiEx.DeepAgent.Tools.Write.execute/2` — takes atom-key map `%{path: ..., content: ...}` + project_root
 - `PiEx.DeepAgent.PathGuard.resolve/2` — `canonical_root, user_path` order

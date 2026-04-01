@@ -23,6 +23,7 @@ defmodule PiEx.Agent.Server do
   use GenServer
 
   alias PiEx.Agent.{Config, Compaction, Loop}
+  alias PiEx.AI.ProviderParams
 
   defstruct [
     :config,
@@ -305,7 +306,12 @@ defmodule PiEx.Agent.Server do
 
     {:ok, task_pid} =
       Task.Supervisor.start_child(PiEx.TaskSupervisor, fn ->
-        case compact_fn.(messages, config.model, config.compaction, config.api_key) do
+        case compact_fn.(
+               messages,
+               config.model,
+               config.compaction,
+               ProviderParams.api_key(config.model)
+             ) do
           {:ok, new_messages} -> send(server_pid, {:compaction_done, new_messages})
           {:error, reason} -> send(server_pid, {:compaction_error, reason})
         end

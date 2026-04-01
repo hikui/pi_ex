@@ -7,6 +7,7 @@ defmodule PiEx.Agent.ServerTest do
   alias PiEx.AI.Message
   alias PiEx.AI.Message.{AssistantMessage, Usage}
   alias PiEx.AI.Content.{TextContent, ToolCall}
+  alias PiEx.AI.ProviderParams
 
   # ---------------------------------------------------------------------------
   # Fake stream helpers
@@ -165,6 +166,41 @@ defmodule PiEx.Agent.ServerTest do
       assert_receive {:agent_event, {:agent_end, messages}}, 3000
 
       assert %AssistantMessage{error_message: "HTTP 400: bad request"} = List.last(messages)
+    end
+
+    test "passes stream opts derived from model provider params" do
+      test_pid = self()
+
+      model =
+        Model.new("gpt-5.4", "openai_responses",
+          provider_params: %ProviderParams.OpenAIResponses{
+            api_key: "sk-openai",
+            temperature: 0.3,
+            max_tokens: 77,
+            reasoning_effort: "low",
+            reasoning_summary: "auto"
+          }
+        )
+
+      pid =
+        start_agent!(%Config{
+          model: model,
+          stream_fn: fn _model, _ctx, opts ->
+            send(test_pid, {:stream_opts, opts})
+            text_stream("ok")
+          end
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "hello")
+
+      assert_receive {:stream_opts, opts}, 3000
+      assert opts[:api_key] == "sk-openai"
+      assert opts[:temperature] == 0.3
+      assert opts[:max_tokens] == 77
+      assert opts[:reasoning_effort] == "low"
+      assert opts[:reasoning_summary] == "auto"
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
     end
 
     test "returns :error when already running" do
@@ -530,6 +566,39 @@ defmodule PiEx.Agent.ServerTest do
       :ok = Server.compact(pid)
       assert_receive :compact_fn_called, 3000
       assert_receive {:agent_event, :compaction_start}, 3000
+      assert_receive {:agent_event, {:compaction_end, _}}, 3000
+    end
+
+    test "passes the model api key into compact_fn" do
+      alias PiEx.AI.Message.CompactionSummaryMessage
+      test_pid = self()
+
+      compact_fn = fn _messages, _model, _settings, api_key ->
+        send(test_pid, {:compact_api_key, api_key})
+        {:ok, [%CompactionSummaryMessage{summary: "done", tokens_before: 90, timestamp: 0}]}
+      end
+
+      pid =
+        start_agent!(%PiEx.Agent.Config{
+          model:
+            Model.new("test-model", "openai",
+              context_window: 100,
+              provider_params: %ProviderParams.OpenAI{api_key: "sk-openai"}
+            ),
+          stream_fn: fn _m, _c, _o -> high_usage_stream("hi") end,
+          compaction: %PiEx.Agent.Compaction.Settings{
+            enabled: true,
+            reserve_tokens: 50,
+            keep_recent_tokens: 10
+          },
+          compact_fn: compact_fn
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert_receive {:agent_event, {:agent_end, _}}, 3000
+      assert_receive {:compact_api_key, "sk-openai"}, 3000
       assert_receive {:agent_event, {:compaction_end, _}}, 3000
     end
 
