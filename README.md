@@ -86,6 +86,7 @@ model =
       api_key: "sk-...",
       temperature: 0.7,
       max_tokens: 4096,
+      http_receive_timeout: 300_000,
       reasoning_effort: "low",
       reasoning_summary: "auto"
     }
@@ -322,9 +323,7 @@ config = %PiEx.Agent.Config{
   system_prompt: "You are an orchestrator. Use run_agent to delegate tasks.",
   tools: [],        # run_agent is injected automatically
   subagents: [reviewer],
-  max_depth: 1,
-  subagent_timeout: 120_000,   # max time per subagent call (ms)
-  tool_call_timeout: 130_000   # must be >= subagent_timeout
+  max_depth: 1
 }
 
 {:ok, agent} = PiEx.Agent.start(config)
@@ -379,8 +378,10 @@ PiEx.SubAgent.Registry.deregister("test_writer")
 | `max_depth` | `nil` | Max nesting; `nil` = unlimited. `run_agent` not injected when `depth >= max_depth` |
 | `parent_pid` | `nil` | Parent `Agent.Server` pid; set automatically |
 | `subagents` | `[]` | Inline `%SubAgent.Definition{}` list |
-| `subagent_timeout` | `300_000` | ms the `run_agent` tool waits per subagent |
-| `tool_call_timeout` | `60_000` | ms each tool call is allowed before being killed; set ≥ `subagent_timeout` when using subagents |
+
+Tool timeouts are no longer configured on `PiEx.Agent.Config`. Long-running tools
+must handle their own timeout policy, and LLM HTTP request timeout belongs on the
+model's `provider_params` (for example `http_receive_timeout`).
 
 ### Concurrency
 

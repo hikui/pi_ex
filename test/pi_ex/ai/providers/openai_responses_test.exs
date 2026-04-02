@@ -6,6 +6,7 @@ defmodule PiEx.AI.Providers.OpenAIResponsesTest do
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.AI.Providers.OpenAIResponses
   alias PiEx.AI.ProviderParams
+  alias PiEx.AI.ProviderParams.OpenAIResponses, as: OpenAIResponsesParams
 
   defp model, do: Model.new("gpt-5.4", "openai_responses")
   defp context(text \\ "Hello!"), do: %Context{messages: [Message.user(text)]}
@@ -189,6 +190,21 @@ defmodule PiEx.AI.Providers.OpenAIResponsesTest do
       assert path == "/v1/responses"
       assert decoded["reasoning"]["summary"] == "auto"
       assert decoded["reasoning"]["effort"] == "low"
+    end
+
+    test "build_req_options/2 uses provider timeout when present" do
+      req_opts =
+        OpenAIResponses.build_req_options(
+          %OpenAIResponsesParams{http_receive_timeout: 12_345},
+          []
+        )
+
+      assert req_opts[:receive_timeout] == 12_345
+    end
+
+    test "build_req_options/2 defaults provider timeout to 300_000" do
+      req_opts = OpenAIResponses.build_req_options(%OpenAIResponsesParams{}, [])
+      assert req_opts[:receive_timeout] == 300_000
     end
   end
 end

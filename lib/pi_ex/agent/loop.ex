@@ -181,16 +181,13 @@ defmodule PiEx.Agent.Loop do
   defp execute_tool_calls(tool_calls, config, server_pid, messages) do
     tool_map = Map.new(config.tools, fn t -> {t.name, t} end)
 
-    timeout = config.tool_call_timeout || 60_000
-
     results =
       tool_calls
       |> Task.async_stream(
         fn %ToolCall{id: call_id, name: tool_name, arguments: args} ->
           execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid)
         end,
-        timeout: timeout,
-        on_timeout: :kill_task
+        timeout: :infinity
       )
       |> Enum.map(fn
         {:ok, result} ->
@@ -200,7 +197,7 @@ defmodule PiEx.Agent.Loop do
           %ToolResultMessage{
             tool_call_id: "unknown",
             tool_name: "unknown",
-            content: [%TextContent{text: "Tool timed out: #{inspect(reason)}"}],
+            content: [%TextContent{text: "Tool failed: #{inspect(reason)}"}],
             is_error: true,
             timestamp: System.system_time(:millisecond)
           }

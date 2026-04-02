@@ -39,9 +39,7 @@ defmodule PiEx.Agent.Tools.RunAgentTest do
       stream_fn: fn _m, _c, _o -> stream_fn.() end,
       max_depth: Keyword.get(opts, :max_depth, nil),
       depth: Keyword.get(opts, :depth, 0),
-      subagents: Keyword.get(opts, :subagents, []),
-      subagent_timeout: Keyword.get(opts, :subagent_timeout, 5_000),
-      tool_call_timeout: Keyword.get(opts, :tool_call_timeout, 10_000)
+      subagents: Keyword.get(opts, :subagents, [])
     }
   end
 
@@ -128,9 +126,7 @@ defmodule PiEx.Agent.Tools.RunAgentTest do
       # Parent stream captures the context to verify system_prompt was applied
       parent_config =
         base_config(fn -> text_stream("done") end,
-          subagents: [definition],
-          subagent_timeout: 5_000,
-          tool_call_timeout: 10_000
+          subagents: [definition]
         )
 
       sub_stream = fn _m, ctx, _o ->
@@ -247,6 +243,24 @@ defmodule PiEx.Agent.Tools.RunAgentTest do
 
       # We should have received subagent_event wrappers on parent_pid's subscribers
       assert_received {:agent_event, {:subagent_event, nil, 1, {:agent_end, _}}}
+    end
+
+    test "waits for a slow subagent without a local timeout" do
+      parent_config =
+        base_config(fn ->
+          Process.sleep(100)
+          text_stream("slow subagent out")
+        end)
+
+      {:ok, parent_pid} = Supervisor.start_agent(parent_config)
+      on_exit(fn -> DynamicSupervisor.terminate_child(PiEx.Agent.Supervisor, parent_pid) end)
+
+      tool = RunAgent.tool(parent_config, parent_pid)
+
+      assert {:ok, %{content: [%TextContent{text: text}]}} =
+               tool.execute.("call_1", %{"prompt" => "go slow"}, [])
+
+      assert String.contains?(text, "slow subagent out")
     end
   end
 end

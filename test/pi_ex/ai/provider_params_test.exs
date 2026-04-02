@@ -16,6 +16,7 @@ defmodule PiEx.AI.ProviderParamsTest do
             base_url: "https://example.test/v1",
             temperature: 0.3,
             max_tokens: 400,
+            http_receive_timeout: 45_000,
             reasoning_effort: "low",
             reasoning_summary: "auto"
           }
@@ -26,6 +27,7 @@ defmodule PiEx.AI.ProviderParamsTest do
       assert opts[:base_url] == "https://example.test/v1"
       assert opts[:temperature] == 0.3
       assert opts[:max_tokens] == 400
+      assert opts[:http_receive_timeout] == 45_000
       assert opts[:reasoning_effort] == "low"
       assert opts[:reasoning_summary] == "auto"
     end
@@ -36,7 +38,8 @@ defmodule PiEx.AI.ProviderParamsTest do
           provider_params: %ProviderParams.OpenAI{
             api_key: "sk-openai",
             temperature: 0.1,
-            max_tokens: 50
+            max_tokens: 50,
+            http_receive_timeout: 12_000
           }
         )
 
@@ -44,6 +47,7 @@ defmodule PiEx.AI.ProviderParamsTest do
       assert opts[:api_key] == "sk-openai"
       assert opts[:temperature] == 0.1
       assert opts[:max_tokens] == 50
+      assert opts[:http_receive_timeout] == 12_000
       refute Keyword.has_key?(opts, :reasoning_effort)
     end
 
@@ -54,7 +58,8 @@ defmodule PiEx.AI.ProviderParamsTest do
             api_key: "sk-litellm",
             base_url: "http://localhost:4000/v1",
             temperature: 0.4,
-            max_tokens: 60
+            max_tokens: 60,
+            http_receive_timeout: 9_000
           }
         )
 
@@ -63,6 +68,7 @@ defmodule PiEx.AI.ProviderParamsTest do
       assert opts[:base_url] == "http://localhost:4000/v1"
       assert opts[:temperature] == 0.4
       assert opts[:max_tokens] == 60
+      assert opts[:http_receive_timeout] == 9_000
       refute Keyword.has_key?(opts, :reasoning_effort)
     end
 

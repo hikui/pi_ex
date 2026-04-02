@@ -33,6 +33,7 @@ defmodule Example.SkillsDemo do
 
   @model Model.new("gpt-5.4", "openai_responses",
            provider_params: %ProviderParams.OpenAIResponses{
+             http_receive_timeout: 300_000,
              reasoning_effort: "low",
              reasoning_summary: "auto"
            }

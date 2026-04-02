@@ -8,6 +8,7 @@ defmodule PiEx.AI.Providers.OpenAITest do
   alias PiEx.AI.Content.{TextContent, ToolCall}
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.AI.Providers.OpenAI
+  alias PiEx.AI.ProviderParams.OpenAI, as: OpenAIParams
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -340,6 +341,16 @@ defmodule PiEx.AI.Providers.OpenAITest do
 
       [{:path, path}] = :ets.lookup(received, :path)
       assert path == "/v1/chat/completions"
+    end
+
+    test "build_req_options/2 uses provider timeout when present" do
+      req_opts = OpenAI.build_req_options(%OpenAIParams{http_receive_timeout: 12_345}, [])
+      assert req_opts[:receive_timeout] == 12_345
+    end
+
+    test "build_req_options/2 defaults provider timeout to 300_000" do
+      req_opts = OpenAI.build_req_options(%OpenAIParams{}, [])
+      assert req_opts[:receive_timeout] == 300_000
     end
   end
 

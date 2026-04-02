@@ -177,6 +177,7 @@ defmodule PiEx.Agent.ServerTest do
             api_key: "sk-openai",
             temperature: 0.3,
             max_tokens: 77,
+            http_receive_timeout: 12_345,
             reasoning_effort: "low",
             reasoning_summary: "auto"
           }
@@ -198,6 +199,7 @@ defmodule PiEx.Agent.ServerTest do
       assert opts[:api_key] == "sk-openai"
       assert opts[:temperature] == 0.3
       assert opts[:max_tokens] == 77
+      assert opts[:http_receive_timeout] == 12_345
       assert opts[:reasoning_effort] == "low"
       assert opts[:reasoning_summary] == "auto"
       assert_receive {:agent_event, {:agent_end, _}}, 3000
@@ -373,6 +375,41 @@ defmodule PiEx.Agent.ServerTest do
 
       assert_received {:agent_event, {:tool_execution_start, "call_1", "echo", _}}
       assert_received {:agent_event, {:tool_execution_end, "call_1", "echo", _, false}}
+    end
+
+    test "waits for a slow tool result without agent-level timeout config" do
+      slow_tool = %PiEx.Agent.Tool{
+        name: "slow_echo",
+        description: "sleeps before replying",
+        parameters: %{},
+        label: "Slow Echo",
+        execute: fn _id, _params, _opts ->
+          Process.sleep(100)
+          {:ok, %{content: [%TextContent{text: "slow ok"}], details: nil}}
+        end
+      }
+
+      call_count = :counters.new(1, [])
+
+      pid =
+        start_agent!(%Config{
+          model: Model.new("test-model", "openai"),
+          tools: [slow_tool],
+          stream_fn: fn _m, _ctx, _o ->
+            :counters.add(call_count, 1, 1)
+
+            case :counters.get(call_count, 1) do
+              1 -> tool_call_stream("call_1", "slow_echo", %{})
+              _ -> text_stream("done")
+            end
+          end
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert_receive {:agent_event, {:agent_end, messages}}, 5_000
+      assert Enum.any?(messages, &match?(%Message.ToolResultMessage{}, &1))
     end
   end
 

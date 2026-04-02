@@ -8,13 +8,14 @@ defmodule PiEx.AI.ProviderParams do
   defmodule OpenAI do
     @moduledoc "Runtime params supported by the OpenAI chat completions provider."
 
-    defstruct [:api_key, :base_url, :temperature, :max_tokens]
+    defstruct [:api_key, :base_url, :temperature, :max_tokens, :http_receive_timeout]
 
     @type t :: %__MODULE__{
             api_key: String.t() | nil,
             base_url: String.t() | nil,
             temperature: float() | nil,
-            max_tokens: pos_integer() | nil
+            max_tokens: pos_integer() | nil,
+            http_receive_timeout: pos_integer() | nil
           }
   end
 
@@ -26,6 +27,7 @@ defmodule PiEx.AI.ProviderParams do
       :base_url,
       :temperature,
       :max_tokens,
+      :http_receive_timeout,
       :reasoning_effort,
       :reasoning_summary
     ]
@@ -35,6 +37,7 @@ defmodule PiEx.AI.ProviderParams do
             base_url: String.t() | nil,
             temperature: float() | nil,
             max_tokens: pos_integer() | nil,
+            http_receive_timeout: pos_integer() | nil,
             reasoning_effort: String.t() | nil,
             reasoning_summary: String.t() | nil
           }
@@ -43,13 +46,14 @@ defmodule PiEx.AI.ProviderParams do
   defmodule LiteLLM do
     @moduledoc "Runtime params supported by the LiteLLM provider."
 
-    defstruct [:api_key, :base_url, :temperature, :max_tokens]
+    defstruct [:api_key, :base_url, :temperature, :max_tokens, :http_receive_timeout]
 
     @type t :: %__MODULE__{
             api_key: String.t() | nil,
             base_url: String.t() | nil,
             temperature: float() | nil,
-            max_tokens: pos_integer() | nil
+            max_tokens: pos_integer() | nil,
+            http_receive_timeout: pos_integer() | nil
           }
   end
 
@@ -95,6 +99,7 @@ defmodule PiEx.AI.ProviderParams do
     |> maybe_put(:base_url, params.base_url)
     |> maybe_put(:temperature, params.temperature)
     |> maybe_put(:max_tokens, params.max_tokens)
+    |> maybe_put(:http_receive_timeout, params.http_receive_timeout)
   end
 
   defp maybe_put(opts, _key, nil), do: opts

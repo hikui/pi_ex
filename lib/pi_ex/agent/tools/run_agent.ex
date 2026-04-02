@@ -21,16 +21,14 @@ defmodule PiEx.Agent.Tools.RunAgent do
   ## Concurrency
 
   Multiple `run_agent` calls in one turn execute concurrently via the loop's
-  `Task.async_stream`. Increase `config.tool_call_timeout` to accommodate
-  long-running subagents (default is 60 s).
+  `Task.async_stream`. Subagent lifetime is managed through the supervised
+  process tree and normal Elixir process monitoring.
   """
 
   alias PiEx.Agent.{Config, Supervisor, Server}
   alias PiEx.AI.Content.TextContent
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.SubAgent.{Definition, Registry}
-
-  @default_subagent_timeout 300_000
 
   @doc """
   Build a `%PiEx.Agent.Tool{}` that delegates subtasks to subagents.
@@ -64,9 +62,7 @@ defmodule PiEx.Agent.Tools.RunAgent do
          {:ok, agent_pid} <- Supervisor.start_agent(sub_config) do
       Server.subscribe(agent_pid, self())
       :ok = Server.prompt(agent_pid, prompt_text)
-
-      timeout = parent_config.subagent_timeout || @default_subagent_timeout
-      result = collect_result(agent_name, sub_config.depth, parent_server_pid, timeout)
+      result = collect_result(agent_name, sub_config.depth, parent_server_pid)
 
       Supervisor.stop_agent(agent_pid)
 
@@ -116,8 +112,6 @@ defmodule PiEx.Agent.Tools.RunAgent do
         max_depth: max_depth,
         parent_pid: self(),
         subagents: parent_config.subagents,
-        subagent_timeout: parent_config.subagent_timeout,
-        tool_call_timeout: parent_config.tool_call_timeout,
         transform_context: parent_config.transform_context,
         convert_to_llm: parent_config.convert_to_llm,
         stream_fn: parent_config.stream_fn,
@@ -131,7 +125,7 @@ defmodule PiEx.Agent.Tools.RunAgent do
 
   # Collect events from the subagent, forward them to the parent server,
   # and return the final assistant text as the tool result.
-  defp collect_result(agent_name, depth, parent_server_pid, timeout) do
+  defp collect_result(agent_name, depth, parent_server_pid) do
     receive do
       {:agent_event, {:agent_end, messages} = event} ->
         forward_event(parent_server_pid, agent_name, depth, event)
@@ -139,10 +133,7 @@ defmodule PiEx.Agent.Tools.RunAgent do
 
       {:agent_event, event} ->
         forward_event(parent_server_pid, agent_name, depth, event)
-        collect_result(agent_name, depth, parent_server_pid, timeout)
-    after
-      timeout ->
-        {:error, "subagent timed out after #{timeout}ms"}
+        collect_result(agent_name, depth, parent_server_pid)
     end
   end
 

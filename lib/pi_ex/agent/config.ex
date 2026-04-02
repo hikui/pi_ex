@@ -36,10 +36,6 @@ defmodule PiEx.Agent.Config do
   - `:parent_pid` — pid of the parent `Agent.Server`, if this agent was spawned as a subagent.
   - `:subagents` — inline `%PiEx.SubAgent.Definition{}` list. Checked before `PiEx.SubAgent.Registry`
     when resolving a named agent in `run_agent`.
-  - `:subagent_timeout` — milliseconds the `run_agent` tool waits for a subagent to finish.
-    Default: `300_000` (5 minutes).
-  - `:tool_call_timeout` — milliseconds each tool call is allowed to run before being killed.
-    Default: `60_000` (1 minute). Set higher when using subagents if they may take longer.
   """
 
   alias PiEx.AI.Model
@@ -61,9 +57,7 @@ defmodule PiEx.Agent.Config do
     compact_fn: nil,
     depth: 0,
     max_depth: nil,
-    subagents: [],
-    subagent_timeout: nil,
-    tool_call_timeout: nil
+    subagents: []
   ]
 
   @type t :: %__MODULE__{
@@ -89,8 +83,6 @@ defmodule PiEx.Agent.Config do
           depth: non_neg_integer(),
           max_depth: non_neg_integer() | nil,
           parent_pid: pid() | nil,
-          subagents: [PiEx.SubAgent.Definition.t()],
-          subagent_timeout: pos_integer() | nil,
-          tool_call_timeout: pos_integer() | nil
+          subagents: [PiEx.SubAgent.Definition.t()]
         }
 end

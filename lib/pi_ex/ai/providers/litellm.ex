@@ -21,6 +21,7 @@ defmodule PiEx.AI.Providers.LiteLLM do
   - `:base_url` — overrides `LITELLM_API_BASE` env var and the default base URL
   - `:temperature` — float (default: model default)
   - `:max_tokens` — integer
+  - `:http_receive_timeout` — Req receive timeout in milliseconds (forwarded to OpenAI-compatible requests)
   - `:system_prompt` — prepended as a system message (overrides `context.system_prompt`)
   """
   @spec stream(Model.t(), Context.t(), keyword()) :: Enumerable.t()

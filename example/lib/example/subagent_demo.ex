@@ -44,7 +44,8 @@ defmodule Example.SubagentDemo do
 
   @model Model.new("gpt-4o", "openai",
            provider_params: %ProviderParams.OpenAI{
-             max_tokens: 4096
+             max_tokens: 4096,
+             http_receive_timeout: 300_000
            }
          )
 
@@ -120,10 +121,7 @@ defmodule Example.SubagentDemo do
       # No file tools for the orchestrator — it delegates everything
       tools: [],
       subagents: subagents,
-      max_depth: 1,
-      # Subagents may take up to 4 minutes; outer tool timeout must be >= this
-      subagent_timeout: 240_000,
-      tool_call_timeout: 250_000
+      max_depth: 1
     }
   end
 

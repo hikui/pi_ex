@@ -18,8 +18,10 @@ defmodule PiEx.AI.Providers.OpenAI do
 
   alias PiEx.AI.Model
   alias PiEx.AI.Context
+  alias PiEx.AI.ProviderParams.OpenAI, as: OpenAIParams
 
   @base_url "https://api.openai.com/v1"
+  @default_receive_timeout 300_000
 
   @doc """
   Returns a lazy stream of `PiEx.AI.StreamEvent.t()` events.
@@ -29,6 +31,7 @@ defmodule PiEx.AI.Providers.OpenAI do
   - `:base_url` — overrides the default OpenAI base URL (useful for OpenAI-compatible proxies like LiteLLM)
   - `:temperature` — float (default: model default)
   - `:max_tokens` — integer
+  - `:http_receive_timeout` — Req receive timeout in milliseconds (default: `300_000`)
   - `:system_prompt` — prepended as a system message (overrides `context.system_prompt`)
   """
   @spec stream(Model.t(), Context.t(), keyword()) :: Enumerable.t()
@@ -41,6 +44,17 @@ defmodule PiEx.AI.Providers.OpenAI do
       fn task -> receive_events(task, ref) end,
       fn task -> Task.shutdown(task, :brutal_kill) end
     )
+  end
+
+  @doc false
+  def build_req_options(provider_params, opts \\ [])
+
+  def build_req_options(%OpenAIParams{} = provider_params, opts) do
+    Keyword.put(opts, :receive_timeout, req_receive_timeout(provider_params, opts))
+  end
+
+  def build_req_options(nil, opts) do
+    Keyword.put(opts, :receive_timeout, req_receive_timeout(nil, opts))
   end
 
   # ---------------------------------------------------------------------------
@@ -87,13 +101,13 @@ defmodule PiEx.AI.Providers.OpenAI do
     Process.put(:sse_partial, initial_partial)
 
     req_opts =
-      [
+      build_req_options(model.provider_params, [])
+      |> Keyword.merge(
         headers: [
           {"authorization", "Bearer #{api_key}"},
           {"content-type", "application/json"}
         ],
         body: Jason.encode!(body),
-        receive_timeout: 300_000,
         into: fn {:data, chunk}, {req, resp} ->
           buffer = Process.get(:sse_buffer, "")
           partial = Process.get(:sse_partial, initial_partial)
@@ -105,7 +119,7 @@ defmodule PiEx.AI.Providers.OpenAI do
           {:cont, {req, resp}}
         end,
         raw: true
-      ]
+      )
 
     req_opts =
       case Keyword.get(opts, :plug) do
@@ -557,6 +571,15 @@ defmodule PiEx.AI.Providers.OpenAI do
   defp parse_stop_reason("tool_calls"), do: :tool_use
   defp parse_stop_reason(nil), do: nil
   defp parse_stop_reason(_), do: :stop
+
+  defp req_receive_timeout(%OpenAIParams{http_receive_timeout: timeout}, opts)
+       when is_integer(timeout) and timeout > 0 do
+    Keyword.get(opts, :http_receive_timeout, timeout)
+  end
+
+  defp req_receive_timeout(_provider_params, opts) do
+    Keyword.get(opts, :http_receive_timeout, @default_receive_timeout)
+  end
 
   defp empty_assistant_message(model_id, stop_reason, error_message) do
     %AssistantMessage{
