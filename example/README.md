@@ -5,6 +5,7 @@ This project contains runnable demos for `PiEx.Agent` and `PiEx.DeepAgent`.
 ## Demos
 
 - `Example.MultiRoundDemo.run/0` — basic multi-round conversation demo using one persistent `PiEx.Agent`
+- `Example.ObservabilityDemo.run/0` — OpenTelemetry demo showing host-app exporter config plus `pi_ex` spans
 - `Example.DeepAgentExample.run/0` — project analyst demo with built-in filesystem tools plus a custom `mix_test` tool
 - `Example.SkillsDemo.run/0` — skills-enabled deep agent demo using `example/skills/`
 - `Example.CompactionDemo.run/0` — auto-context-compaction demo with a tiny context window
@@ -16,12 +17,23 @@ From the `example/` directory:
 ```bash
 mix deps.get
 mix run -e "Example.MultiRoundDemo.run()"
+mix run -e "Example.ObservabilityDemo.run()"
 mix run -e "Example.DeepAgentExample.run()"
 mix run -e "Example.SkillsDemo.run()"
 mix run -e "Example.CompactionDemo.run()"
 ```
 
 Set `OPENAI_API_KEY` first, or configure `:pi_ex, :openai` in `config/dev.secret.exs`.
+
+To export traces, also point the OTLP exporter at a Collector or backend:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+This example project owns the OpenTelemetry SDK/exporter config. `pi_ex` only emits spans using the
+OpenTelemetry API and uses instrumentation scope `pi_ex`, so a Collector can route those spans separately
+from the rest of the host app if needed.
 
 The demos use the model-centric provider params API. For example:
 

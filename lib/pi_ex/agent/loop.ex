@@ -41,19 +41,41 @@ defmodule PiEx.Agent.Loop do
   alias PiEx.AI.Content.{TextContent, ToolCall}
   alias PiEx.AI.Message.{AssistantMessage, ToolResultMessage}
   alias PiEx.Agent.Config
+  alias PiEx.Observability
 
   @doc """
   Entry point. Called in a supervised Task by the Agent GenServer.
 
   Sends `{:agent_event, event}` messages to `server_pid`.
   """
-  @spec run([PiEx.AI.Message.t()], Config.t(), pid()) :: :ok
-  def run(initial_messages, %Config{} = config, server_pid) do
-    send(server_pid, {:agent_event, :agent_start})
-    messages = initial_messages
-    final_messages = outer_loop(messages, config, server_pid)
-    send(server_pid, {:agent_event, {:agent_end, final_messages}})
-    :ok
+  @spec run([PiEx.AI.Message.t()], Config.t(), pid(), term() | nil) :: :ok
+  def run(initial_messages, %Config{} = config, server_pid, parent_ctx \\ nil) do
+    settings = Observability.resolve_settings(config.observability)
+
+    Observability.with_span(
+      Observability.agent_span_name(settings),
+      [
+        kind: agent_span_kind(config),
+        parent_ctx: parent_ctx,
+        attributes: Observability.agent_span_attributes(initial_messages, config, settings)
+      ],
+      settings,
+      fn span_ctx ->
+        send(server_pid, {:agent_event, :agent_start})
+        final_messages = outer_loop(initial_messages, config, server_pid)
+
+        Observability.finish_agent_span(
+          span_ctx,
+          initial_messages,
+          final_messages,
+          config,
+          settings
+        )
+
+        send(server_pid, {:agent_event, {:agent_end, final_messages}})
+        :ok
+      end
+    )
   end
 
   # ---------------------------------------------------------------------------
@@ -127,7 +149,13 @@ defmodule PiEx.Agent.Loop do
       end
 
     stream_fn = config.stream_fn || fn m, c, o -> PiEx.AI.stream(m, c, o) end
-    stream = stream_fn.(config.model, context, stream_opts)
+
+    stream =
+      stream_fn.(
+        config.model,
+        context,
+        Keyword.put(stream_opts, :observability, config.observability)
+      )
 
     Enum.reduce_while(stream, {nil, messages}, fn event, {partial, acc_messages} ->
       case event do
@@ -180,12 +208,13 @@ defmodule PiEx.Agent.Loop do
 
   defp execute_tool_calls(tool_calls, config, server_pid, messages) do
     tool_map = Map.new(config.tools, fn t -> {t.name, t} end)
+    parent_ctx = Observability.current_ctx()
 
     results =
       tool_calls
       |> Task.async_stream(
         fn %ToolCall{id: call_id, name: tool_name, arguments: args} ->
-          execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid)
+          execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid, parent_ctx)
         end,
         timeout: :infinity
       )
@@ -213,7 +242,9 @@ defmodule PiEx.Agent.Loop do
     {results, new_messages}
   end
 
-  defp execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid) do
+  defp execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid, parent_ctx) do
+    settings = Observability.resolve_settings(config.observability)
+
     # Before-hook check
     blocked =
       case config.before_tool_call do
@@ -223,14 +254,17 @@ defmodule PiEx.Agent.Loop do
 
     case blocked do
       {:block, reason} ->
-        result = blocked_tool_result(call_id, tool_name, reason)
-        send(server_pid, {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}})
-        result
-
-      :ok ->
-        case Map.fetch(tool_map, tool_name) do
-          :error ->
-            result = error_tool_result(call_id, tool_name, "Unknown tool: #{tool_name}")
+        Observability.with_span(
+          Observability.tool_span_name(tool_name),
+          [
+            kind: :internal,
+            parent_ctx: parent_ctx,
+            attributes: blocked_tool_span_attributes(tool_name, call_id, args)
+          ],
+          settings,
+          fn span_ctx ->
+            result = blocked_tool_result(call_id, tool_name, reason)
+            Observability.set_error(span_ctx, :blocked)
 
             send(
               server_pid,
@@ -238,43 +272,23 @@ defmodule PiEx.Agent.Loop do
             )
 
             result
+          end
+        )
 
-          {:ok, tool} ->
-            send(server_pid, {:agent_event, {:tool_execution_start, call_id, tool_name, args}})
-
-            on_update = fn partial_result ->
-              send(
-                server_pid,
-                {:agent_event, {:tool_execution_update, call_id, tool_name, args, partial_result}}
-              )
-            end
-
-            case tool.execute.(call_id, args, on_update: on_update) do
-              {:ok, %{content: content, details: details}} ->
-                result = %ToolResultMessage{
-                  tool_call_id: call_id,
-                  tool_name: tool_name,
-                  content: content,
-                  details: details,
-                  is_error: false,
-                  timestamp: System.system_time(:millisecond)
-                }
-
-                final_result =
-                  case config.after_tool_call do
-                    nil -> result
-                    f -> f.(call_id, tool_name, result)
-                  end
-
-                send(
-                  server_pid,
-                  {:agent_event, {:tool_execution_end, call_id, tool_name, final_result, false}}
-                )
-
-                final_result
-
-              {:error, reason} ->
-                result = error_tool_result(call_id, tool_name, reason)
+      :ok ->
+        case Map.fetch(tool_map, tool_name) do
+          :error ->
+            Observability.with_span(
+              Observability.tool_span_name(tool_name),
+              [
+                kind: :internal,
+                parent_ctx: parent_ctx,
+                attributes: blocked_tool_span_attributes(tool_name, call_id, args)
+              ],
+              settings,
+              fn span_ctx ->
+                result = error_tool_result(call_id, tool_name, "Unknown tool: #{tool_name}")
+                Observability.set_error(span_ctx, :unknown_tool)
 
                 send(
                   server_pid,
@@ -282,7 +296,75 @@ defmodule PiEx.Agent.Loop do
                 )
 
                 result
-            end
+              end
+            )
+
+          {:ok, tool} ->
+            Observability.with_span(
+              Observability.tool_span_name(tool_name),
+              [
+                kind: :internal,
+                parent_ctx: parent_ctx,
+                attributes: Observability.tool_span_attributes(tool, call_id, args)
+              ],
+              settings,
+              fn span_ctx ->
+                send(
+                  server_pid,
+                  {:agent_event, {:tool_execution_start, call_id, tool_name, args}}
+                )
+
+                on_update = fn partial_result ->
+                  send(
+                    server_pid,
+                    {:agent_event,
+                     {:tool_execution_update, call_id, tool_name, args, partial_result}}
+                  )
+                end
+
+                case tool.execute.(call_id, args, on_update: on_update) do
+                  {:ok, %{content: content, details: details}} ->
+                    result = %ToolResultMessage{
+                      tool_call_id: call_id,
+                      tool_name: tool_name,
+                      content: content,
+                      details: details,
+                      is_error: false,
+                      timestamp: System.system_time(:millisecond)
+                    }
+
+                    final_result =
+                      case config.after_tool_call do
+                        nil -> result
+                        f -> f.(call_id, tool_name, result)
+                      end
+
+                    Observability.set_attributes(
+                      span_ctx,
+                      Observability.tool_result_attributes(final_result, settings)
+                    )
+
+                    send(
+                      server_pid,
+                      {:agent_event,
+                       {:tool_execution_end, call_id, tool_name, final_result, false}}
+                    )
+
+                    final_result
+
+                  {:error, reason} ->
+                    result = error_tool_result(call_id, tool_name, reason)
+                    Observability.set_error(span_ctx, reason)
+
+                    send(
+                      server_pid,
+                      {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}}
+                    )
+
+                    result
+                end
+              end
+            )
         end
     end
   end
@@ -341,4 +423,17 @@ defmodule PiEx.Agent.Loop do
       timestamp: System.system_time(:millisecond)
     }
   end
+
+  defp blocked_tool_span_attributes(tool_name, call_id, args) do
+    %{
+      "gen_ai.operation.name" => "execute_tool",
+      "gen_ai.tool.name" => tool_name,
+      "gen_ai.tool.type" => "function",
+      "gen_ai.tool.call.id" => call_id,
+      "gen_ai.tool.call.arguments" => Jason.encode!(args)
+    }
+  end
+
+  defp agent_span_kind(%Config{parent_pid: nil}), do: :client
+  defp agent_span_kind(%Config{}), do: :internal
 end

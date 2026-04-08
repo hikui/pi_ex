@@ -24,6 +24,7 @@ defmodule PiEx.Agent.Server do
 
   alias PiEx.Agent.{Config, Compaction, Loop}
   alias PiEx.AI.ProviderParams
+  alias PiEx.Observability
 
   defstruct [
     :config,
@@ -142,10 +143,11 @@ defmodule PiEx.Agent.Server do
   def handle_call({:prompt, messages}, _from, state) do
     all_messages = state.messages ++ messages
     server_pid = self()
+    parent_ctx = Observability.current_ctx()
 
     task =
       Task.Supervisor.async_nolink(PiEx.TaskSupervisor, fn ->
-        Loop.run(all_messages, state.config, server_pid)
+        Loop.run(all_messages, state.config, server_pid, parent_ctx)
       end)
 
     # Monitor the task so we catch crashes

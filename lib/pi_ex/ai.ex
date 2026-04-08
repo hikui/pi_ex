@@ -22,6 +22,7 @@ defmodule PiEx.AI do
   alias PiEx.AI.{Model, Context, ProviderParams}
   alias PiEx.AI.Message.AssistantMessage
   alias PiEx.AI.Message.Usage
+  alias PiEx.Observability
 
   @providers %{
     "openai" => PiEx.AI.Providers.OpenAI,
@@ -36,6 +37,8 @@ defmodule PiEx.AI do
   """
   @spec stream(Model.t(), Context.t(), keyword()) :: Enumerable.t()
   def stream(%Model{provider: provider} = model, %Context{} = context, opts \\ []) do
+    opts = maybe_put_observability(opts)
+
     with {:ok, model_opts} <- ProviderParams.to_opts(model),
          {:ok, module} <- fetch_provider(provider) do
       module.stream(model, context, Keyword.merge(model_opts, opts))
@@ -81,5 +84,14 @@ defmodule PiEx.AI do
       {:ok, module} -> {:ok, module}
       :error -> {:error, "Unknown provider: #{provider}"}
     end
+  end
+
+  defp maybe_put_observability(opts) do
+    settings =
+      opts
+      |> Keyword.get(:observability)
+      |> Observability.resolve_settings()
+
+    Keyword.put(opts, :observability, settings)
   end
 end

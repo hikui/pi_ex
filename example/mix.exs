@@ -14,14 +14,16 @@ defmodule Example.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :opentelemetry_exporter, :opentelemetry]
     ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:pi_ex, path: "../"}
+      {:pi_ex, path: "../"},
+      {:opentelemetry, "~> 1.7"},
+      {:opentelemetry_exporter, "~> 1.10"}
     ]
   end
 end

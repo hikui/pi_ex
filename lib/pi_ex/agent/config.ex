@@ -36,9 +36,14 @@ defmodule PiEx.Agent.Config do
   - `:parent_pid` — pid of the parent `Agent.Server`, if this agent was spawned as a subagent.
   - `:subagents` — inline `%PiEx.SubAgent.Definition{}` list. Checked before `PiEx.SubAgent.Registry`
     when resolving a named agent in `run_agent`.
+
+  ## Observability (optional)
+  - `:observability` — `%PiEx.Observability.Settings{}` or keyword/map overrides merged with
+    `config :pi_ex, :observability, ...`
   """
 
   alias PiEx.AI.Model
+  alias PiEx.Observability.Settings
 
   @enforce_keys [:model]
   defstruct [
@@ -55,6 +60,7 @@ defmodule PiEx.Agent.Config do
     stream_fn: nil,
     compaction: nil,
     compact_fn: nil,
+    observability: nil,
     depth: 0,
     max_depth: nil,
     subagents: []
@@ -80,6 +86,7 @@ defmodule PiEx.Agent.Config do
              | nil ->
                {:ok, [PiEx.AI.Message.t()]} | {:error, term()})
             | nil,
+          observability: Settings.t() | map() | keyword() | nil,
           depth: non_neg_integer(),
           max_depth: non_neg_integer() | nil,
           parent_pid: pid() | nil,

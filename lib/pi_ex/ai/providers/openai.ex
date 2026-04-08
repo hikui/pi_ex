@@ -19,6 +19,7 @@ defmodule PiEx.AI.Providers.OpenAI do
   alias PiEx.AI.Model
   alias PiEx.AI.Context
   alias PiEx.AI.ProviderParams.OpenAI, as: OpenAIParams
+  alias PiEx.Observability
 
   @base_url "https://api.openai.com/v1"
   @default_receive_timeout 300_000
@@ -38,9 +39,10 @@ defmodule PiEx.AI.Providers.OpenAI do
   def stream(%Model{} = model, %Context{} = context, opts \\ []) do
     parent = self()
     ref = make_ref()
+    parent_ctx = Observability.current_ctx()
 
     Stream.resource(
-      fn -> start_stream(parent, ref, model, context, opts) end,
+      fn -> start_stream(parent, ref, model, context, opts, parent_ctx) end,
       fn task -> receive_events(task, ref) end,
       fn task -> Task.shutdown(task, :brutal_kill) end
     )
@@ -61,9 +63,9 @@ defmodule PiEx.AI.Providers.OpenAI do
   # Stream.resource callbacks
   # ---------------------------------------------------------------------------
 
-  defp start_stream(parent, ref, model, context, opts) do
+  defp start_stream(parent, ref, model, context, opts, parent_ctx) do
     Task.Supervisor.async_nolink(PiEx.TaskSupervisor, fn ->
-      run_request(parent, ref, model, context, opts)
+      run_request(parent, ref, model, context, opts, parent_ctx)
     end)
   end
 
@@ -89,67 +91,99 @@ defmodule PiEx.AI.Providers.OpenAI do
   # HTTP request + SSE parsing
   # ---------------------------------------------------------------------------
 
-  defp run_request(parent, ref, model, context, opts) do
-    api_key = Keyword.get(opts, :api_key) || PiEx.AI.ProviderConfig.get_api_key("openai") || ""
-    body = build_request_body(model, context, opts)
-    initial_partial = empty_assistant_message(model.id, :stop, nil)
-    send(parent, {ref, {:event, {:start, initial_partial}}})
+  defp run_request(parent, ref, model, context, opts, parent_ctx) do
+    settings = Keyword.get(opts, :observability)
 
-    # Use process dictionary for SSE buffer/partial state across into: calls.
-    # (Req's into: callback receives {request, response} as acc, not a custom value.)
-    Process.put(:sse_buffer, "")
-    Process.put(:sse_partial, initial_partial)
+    Observability.with_span(
+      Observability.model_span_name(model.id),
+      [
+        kind: :client,
+        parent_ctx: parent_ctx,
+        attributes:
+          Observability.model_span_attributes(
+            model,
+            context,
+            opts,
+            Observability.resolve_settings(settings)
+          )
+      ],
+      settings,
+      fn span_ctx ->
+        api_key =
+          Keyword.get(opts, :api_key) || PiEx.AI.ProviderConfig.get_api_key("openai") || ""
 
-    req_opts =
-      build_req_options(model.provider_params, [])
-      |> Keyword.merge(
-        headers: [
-          {"authorization", "Bearer #{api_key}"},
-          {"content-type", "application/json"}
-        ],
-        body: Jason.encode!(body),
-        into: fn {:data, chunk}, {req, resp} ->
-          buffer = Process.get(:sse_buffer, "")
-          partial = Process.get(:sse_partial, initial_partial)
-          {lines, remainder} = split_sse_lines(buffer <> chunk)
-          {new_partial, events} = process_sse_lines(lines, partial)
-          Process.put(:sse_buffer, remainder)
-          Process.put(:sse_partial, new_partial)
-          Enum.each(events, &send(parent, {ref, {:event, &1}}))
-          {:cont, {req, resp}}
-        end,
-        raw: true
-      )
+        body = build_request_body(model, context, opts)
+        initial_partial = empty_assistant_message(model.id, :stop, nil)
+        send(parent, {ref, {:event, {:start, initial_partial}}})
 
-    req_opts =
-      case Keyword.get(opts, :plug) do
-        nil -> req_opts
-        plug -> Keyword.put(req_opts, :plug, plug)
+        Process.put(:sse_buffer, "")
+        Process.put(:sse_partial, initial_partial)
+
+        req_opts =
+          build_req_options(model.provider_params, [])
+          |> Keyword.merge(
+            headers: [
+              {"authorization", "Bearer #{api_key}"},
+              {"content-type", "application/json"}
+            ],
+            body: Jason.encode!(body),
+            into: fn {:data, chunk}, {req, resp} ->
+              buffer = Process.get(:sse_buffer, "")
+              partial = Process.get(:sse_partial, initial_partial)
+              {lines, remainder} = split_sse_lines(buffer <> chunk)
+              {new_partial, events} = process_sse_lines(lines, partial)
+              Process.put(:sse_buffer, remainder)
+              Process.put(:sse_partial, new_partial)
+              Enum.each(events, &send(parent, {ref, {:event, &1}}))
+              {:cont, {req, resp}}
+            end,
+            raw: true
+          )
+
+        req_opts =
+          case Keyword.get(opts, :plug) do
+            nil -> req_opts
+            plug -> Keyword.put(req_opts, :plug, plug)
+          end
+
+        base_url =
+          Keyword.get(opts, :base_url) || PiEx.AI.ProviderConfig.get_base_url("openai") ||
+            @base_url
+
+        result = Req.post("#{base_url}/chat/completions", req_opts)
+
+        case result do
+          {:ok, %{status: status}} when status in 200..299 ->
+            final_partial = Process.get(:sse_partial, initial_partial)
+
+            Observability.finish_model_span(
+              span_ctx,
+              final_partial,
+              Observability.resolve_settings(settings)
+            )
+
+            send(parent, {ref, :done})
+
+          {:ok, %{status: status, body: body}} ->
+            error_body = try_decode(body)
+            msg = empty_assistant_message("", :error, "HTTP #{status}: #{inspect(error_body)}")
+            Observability.set_error(span_ctx, Integer.to_string(status))
+            send(parent, {ref, {:error, {:error, :error, msg}}})
+            send(parent, {ref, :done})
+
+          {:error, exception} ->
+            reason =
+              if match?(%Req.TransportError{reason: :closed}, exception),
+                do: :aborted,
+                else: :error
+
+            msg = empty_assistant_message("", reason, Exception.message(exception))
+            Observability.set_error(span_ctx, reason)
+            send(parent, {ref, {:error, {:error, reason, msg}}})
+            send(parent, {ref, :done})
+        end
       end
-
-    base_url =
-      Keyword.get(opts, :base_url) || PiEx.AI.ProviderConfig.get_base_url("openai") || @base_url
-
-    result = Req.post("#{base_url}/chat/completions", req_opts)
-
-    case result do
-      {:ok, %{status: status}} when status in 200..299 ->
-        send(parent, {ref, :done})
-
-      {:ok, %{status: status, body: body}} ->
-        error_body = try_decode(body)
-        msg = empty_assistant_message("", :error, "HTTP #{status}: #{inspect(error_body)}")
-        send(parent, {ref, {:error, {:error, :error, msg}}})
-        send(parent, {ref, :done})
-
-      {:error, exception} ->
-        reason =
-          if match?(%Req.TransportError{reason: :closed}, exception), do: :aborted, else: :error
-
-        msg = empty_assistant_message("", reason, Exception.message(exception))
-        send(parent, {ref, {:error, {:error, reason, msg}}})
-        send(parent, {ref, :done})
-    end
+    )
   end
 
   # ---------------------------------------------------------------------------

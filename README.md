@@ -26,7 +26,8 @@ Add to your `mix.exs`:
 def deps do
   [
     {:req, "~> 0.5"},
-    {:jason, "~> 1.4"}
+    {:jason, "~> 1.4"},
+    {:opentelemetry_api, "~> 1.5"}
   ]
 end
 ```
@@ -51,6 +52,76 @@ config :pi_ex, :litellm,
 ```
 
 Resolution order for API keys and base URLs: direct `PiEx.AI` call-time opts → model `provider_params` → environment variables → application config → hardcoded defaults.
+
+## OpenTelemetry
+
+`pi_ex` now emits OpenTelemetry GenAI traces using the OpenTelemetry API and the GenAI semantic conventions.
+The library does not configure SDKs or exporters for you. The host application owns exporter, processor,
+resource, and endpoint setup.
+
+### What gets traced
+
+- `invoke_agent ...` spans for `PiEx.Agent` runs
+- `chat ...` spans for LLM calls
+- `execute_tool ...` spans for tool execution
+
+All spans are emitted under instrumentation scope `pi_ex`, which lets a host app or Collector route
+`pi_ex` spans separately from the rest of the application.
+
+### Enable tracing
+
+Configure the host app with an SDK and exporter:
+
+```elixir
+config :opentelemetry,
+  span_processor: :batch,
+  traces_exporter: :otlp
+
+config :opentelemetry_exporter,
+  otlp_protocol: :http_protobuf,
+  otlp_endpoint: System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT") || "http://localhost:4318"
+```
+
+Enable `pi_ex` instrumentation globally:
+
+```elixir
+config :pi_ex, :observability,
+  enabled: true,
+  capture_sensitive_data: false,
+  agent_name: "my-agent"
+```
+
+Or per agent:
+
+```elixir
+config = %PiEx.Agent.Config{
+  model: model,
+  observability: %PiEx.Observability.Settings{
+    enabled: true,
+    conversation_id: "demo-conversation",
+    agent_name: "support-agent",
+    agent_description: "Customer support assistant"
+  }
+}
+```
+
+Direct `PiEx.AI` usage can also opt in:
+
+```elixir
+PiEx.AI.stream(model, context, observability: [enabled: true])
+```
+
+### Sensitive data
+
+By default, spans include metadata such as provider, model, finish reason, and token usage.
+Prompt bodies, output messages, system instructions, tool arguments, and tool results are excluded unless
+`capture_sensitive_data: true` is enabled.
+
+### Exporting `pi_ex` separately
+
+If your host application exports non-GenAI spans elsewhere, keep a single SDK/exporter pipeline in the app
+and route `pi_ex` spans downstream by instrumentation scope `pi_ex`. This is the recommended way to send
+only `pi_ex` spans to a GenAI-aware backend without forcing a second exporter endpoint inside the library.
 
 ## PiEx.AI — LLM streaming
 
@@ -175,6 +246,11 @@ config = %PiEx.Agent.Config{model: model, tools: [weather_tool]}
   model: model,                    # required
   system_prompt: "...",
   tools: [tool1, tool2],
+  observability: %PiEx.Observability.Settings{
+    enabled: true,
+    conversation_id: "thread-123",
+    agent_name: "assistant"
+  },
 
   # Hooks (all optional)
   before_tool_call: fn id, name, args -> :ok end,

@@ -22,6 +22,8 @@ defmodule PiEx.MixProject do
     [
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
+      {:opentelemetry_api, "~> 1.5"},
+      {:opentelemetry, "~> 1.7", only: :test},
       {:plug, "~> 1.0", only: :test}
     ]
   end
