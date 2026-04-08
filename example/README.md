@@ -4,6 +4,7 @@ This project contains runnable demos for `PiEx.Agent` and `PiEx.DeepAgent`.
 
 ## Demos
 
+- `Example.MultiRoundDemo.run/0` — basic multi-round conversation demo using one persistent `PiEx.Agent`
 - `Example.DeepAgentExample.run/0` — project analyst demo with built-in filesystem tools plus a custom `mix_test` tool
 - `Example.SkillsDemo.run/0` — skills-enabled deep agent demo using `example/skills/`
 - `Example.CompactionDemo.run/0` — auto-context-compaction demo with a tiny context window
@@ -14,6 +15,7 @@ From the `example/` directory:
 
 ```bash
 mix deps.get
+mix run -e "Example.MultiRoundDemo.run()"
 mix run -e "Example.DeepAgentExample.run()"
 mix run -e "Example.SkillsDemo.run()"
 mix run -e "Example.CompactionDemo.run()"
