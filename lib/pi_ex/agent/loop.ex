@@ -41,6 +41,7 @@ defmodule PiEx.Agent.Loop do
   alias PiEx.AI.Content.{TextContent, ToolCall}
   alias PiEx.AI.Message.{AssistantMessage, ToolResultMessage}
   alias PiEx.Agent.Config
+  alias PiEx.Tracing
 
   @doc """
   Entry point. Called in a supervised Task by the Agent GenServer.
@@ -120,6 +121,22 @@ defmodule PiEx.Agent.Loop do
   defp stream_assistant_response(messages, config, server_pid) do
     context = build_context(messages, config)
 
+    llm_span =
+      Tracing.start_span(config.trace_context,
+        name: "pi_ex.llm",
+        type: :llm,
+        inputs: %{
+          system_prompt: context.system_prompt,
+          messages: context.messages,
+          tools: context.tools
+        },
+        metadata: %{
+          provider: config.model.provider,
+          model: config.model.id,
+          depth: config.depth
+        }
+      )
+
     stream_opts =
       case PiEx.AI.ProviderParams.to_opts(config.model) do
         {:ok, opts} -> opts
@@ -152,12 +169,25 @@ defmodule PiEx.Agent.Loop do
 
         {:done, _reason, final_message} ->
           send(server_pid, {:agent_event, {:message_end, final_message}})
+
+          Tracing.finish_span(llm_span, %{
+            message: final_message,
+            usage: final_message.usage,
+            stop_reason: final_message.stop_reason
+          })
+
           new_messages = acc_messages ++ [final_message]
           {:halt, {:ok, final_message, new_messages}}
 
         {:error, reason, error_message} ->
           send(server_pid, {:agent_event, {:agent_error, {reason, error_message.error_message}}})
           send(server_pid, {:agent_event, {:message_end, error_message}})
+
+          Tracing.fail_span(llm_span, error_message.error_message || reason, %{
+            reason: reason,
+            message: error_message
+          })
+
           tag = if reason == :aborted, do: :halt, else: :error
           {:halt, {tag, acc_messages ++ [error_message]}}
 
@@ -214,23 +244,99 @@ defmodule PiEx.Agent.Loop do
   end
 
   defp execute_single_tool(call_id, tool_name, args, tool_map, config, server_pid) do
-    # Before-hook check
-    blocked =
-      case config.before_tool_call do
-        nil -> :ok
-        f -> f.(call_id, tool_name, args)
-      end
+    tool_span =
+      Tracing.start_span(config.trace_context,
+        name: tool_name,
+        type: :tool,
+        inputs: %{call_id: call_id, input: args},
+        metadata: %{depth: config.depth}
+      )
 
-    case blocked do
-      {:block, reason} ->
-        result = blocked_tool_result(call_id, tool_name, reason)
-        send(server_pid, {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}})
+    try do
+      blocked =
+        case config.before_tool_call do
+          nil -> :ok
+          f -> f.(call_id, tool_name, args)
+        end
+
+      case blocked do
+        {:block, reason} ->
+          result = blocked_tool_result(call_id, tool_name, reason)
+          Tracing.fail_span(tool_span, reason, %{result: result})
+
+          send(
+            server_pid,
+            {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}}
+          )
+
+          result
+
+        :ok ->
+          execute_tool(tool_span, call_id, tool_name, args, tool_map, config, server_pid)
+      end
+    rescue
+      error ->
+        Tracing.fail_span(tool_span, Exception.message(error), %{exception: inspect(error)})
+        reraise(error, __STACKTRACE__)
+    catch
+      kind, reason ->
+        Tracing.fail_span(tool_span, {kind, reason}, %{kind: kind, reason: inspect(reason)})
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+  end
+
+  defp execute_tool(tool_span, call_id, tool_name, args, tool_map, config, server_pid) do
+    case Map.fetch(tool_map, tool_name) do
+      :error ->
+        result = error_tool_result(call_id, tool_name, "Unknown tool: #{tool_name}")
+        Tracing.fail_span(tool_span, "Unknown tool: #{tool_name}", %{result: result})
+
+        send(
+          server_pid,
+          {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}}
+        )
+
         result
 
-      :ok ->
-        case Map.fetch(tool_map, tool_name) do
-          :error ->
-            result = error_tool_result(call_id, tool_name, "Unknown tool: #{tool_name}")
+      {:ok, tool} ->
+        send(server_pid, {:agent_event, {:tool_execution_start, call_id, tool_name, args}})
+
+        on_update = fn partial_result ->
+          send(
+            server_pid,
+            {:agent_event, {:tool_execution_update, call_id, tool_name, args, partial_result}}
+          )
+        end
+
+        case tool.execute.(call_id, args, on_update: on_update, trace_span: tool_span) do
+          {:ok, %{content: content, details: details}} ->
+            result = %ToolResultMessage{
+              tool_call_id: call_id,
+              tool_name: tool_name,
+              content: content,
+              details: details,
+              is_error: false,
+              timestamp: System.system_time(:millisecond)
+            }
+
+            final_result =
+              case config.after_tool_call do
+                nil -> result
+                f -> f.(call_id, tool_name, result)
+              end
+
+            Tracing.finish_span(tool_span, %{result: final_result})
+
+            send(
+              server_pid,
+              {:agent_event, {:tool_execution_end, call_id, tool_name, final_result, false}}
+            )
+
+            final_result
+
+          {:error, reason} ->
+            result = error_tool_result(call_id, tool_name, reason)
+            Tracing.fail_span(tool_span, reason, %{result: result})
 
             send(
               server_pid,
@@ -238,51 +344,6 @@ defmodule PiEx.Agent.Loop do
             )
 
             result
-
-          {:ok, tool} ->
-            send(server_pid, {:agent_event, {:tool_execution_start, call_id, tool_name, args}})
-
-            on_update = fn partial_result ->
-              send(
-                server_pid,
-                {:agent_event, {:tool_execution_update, call_id, tool_name, args, partial_result}}
-              )
-            end
-
-            case tool.execute.(call_id, args, on_update: on_update) do
-              {:ok, %{content: content, details: details}} ->
-                result = %ToolResultMessage{
-                  tool_call_id: call_id,
-                  tool_name: tool_name,
-                  content: content,
-                  details: details,
-                  is_error: false,
-                  timestamp: System.system_time(:millisecond)
-                }
-
-                final_result =
-                  case config.after_tool_call do
-                    nil -> result
-                    f -> f.(call_id, tool_name, result)
-                  end
-
-                send(
-                  server_pid,
-                  {:agent_event, {:tool_execution_end, call_id, tool_name, final_result, false}}
-                )
-
-                final_result
-
-              {:error, reason} ->
-                result = error_tool_result(call_id, tool_name, reason)
-
-                send(
-                  server_pid,
-                  {:agent_event, {:tool_execution_end, call_id, tool_name, result, true}}
-                )
-
-                result
-            end
         end
     end
   end

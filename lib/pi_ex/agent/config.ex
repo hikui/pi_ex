@@ -36,6 +36,8 @@ defmodule PiEx.Agent.Config do
   - `:parent_pid` — pid of the parent `Agent.Server`, if this agent was spawned as a subagent.
   - `:subagents` — inline `%PiEx.SubAgent.Definition{}` list. Checked before `PiEx.SubAgent.Registry`
     when resolving a named agent in `run_agent`.
+  - `:trace_context` — internal tracing context used to propagate parent/child spans across
+    agent, tool, subagent, and compaction lifecycles.
   """
 
   alias PiEx.AI.Model
@@ -57,7 +59,8 @@ defmodule PiEx.Agent.Config do
     compact_fn: nil,
     depth: 0,
     max_depth: nil,
-    subagents: []
+    subagents: [],
+    trace_context: nil
   ]
 
   @type t :: %__MODULE__{
@@ -83,6 +86,7 @@ defmodule PiEx.Agent.Config do
           depth: non_neg_integer(),
           max_depth: non_neg_integer() | nil,
           parent_pid: pid() | nil,
-          subagents: [PiEx.SubAgent.Definition.t()]
+          subagents: [PiEx.SubAgent.Definition.t()],
+          trace_context: PiEx.Tracing.Context.t() | nil
         }
 end

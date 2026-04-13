@@ -43,8 +43,8 @@ defmodule PiEx.Agent.Tools.RunAgent do
       label: "Run Subagent",
       description: build_description(parent_config),
       parameters: parameters_schema(),
-      execute: fn _call_id, params, _opts ->
-        run(params, parent_config, parent_server_pid)
+      execute: fn _call_id, params, opts ->
+        run(params, parent_config, parent_server_pid, opts)
       end
     }
   end
@@ -53,12 +53,13 @@ defmodule PiEx.Agent.Tools.RunAgent do
   # Private implementation
   # ---------------------------------------------------------------------------
 
-  defp run(params, parent_config, parent_server_pid) do
+  defp run(params, parent_config, parent_server_pid, opts) do
     prompt_text = Map.fetch!(params, "prompt")
     agent_name = Map.get(params, "agent")
+    trace_span = Keyword.get(opts, :trace_span)
 
     with {:ok, definition} <- resolve_definition(agent_name, parent_config),
-         {:ok, sub_config} <- build_subagent_config(definition, parent_config),
+         {:ok, sub_config} <- build_subagent_config(definition, parent_config, trace_span),
          {:ok, agent_pid} <- Supervisor.start_agent(sub_config) do
       Server.subscribe(agent_pid, self())
       :ok = Server.prompt(agent_pid, prompt_text)
@@ -91,7 +92,7 @@ defmodule PiEx.Agent.Tools.RunAgent do
     end
   end
 
-  defp build_subagent_config(definition, parent_config) do
+  defp build_subagent_config(definition, parent_config, trace_span) do
     new_depth = parent_config.depth + 1
     max_depth = (definition && definition.max_depth) || parent_config.max_depth
 
@@ -116,11 +117,25 @@ defmodule PiEx.Agent.Tools.RunAgent do
         convert_to_llm: parent_config.convert_to_llm,
         stream_fn: parent_config.stream_fn,
         compaction: parent_config.compaction,
-        compact_fn: parent_config.compact_fn
+        compact_fn: parent_config.compact_fn,
+        trace_context: build_trace_context(parent_config.trace_context, trace_span)
       }
 
       {:ok, sub_config}
     end
+  end
+
+  defp build_trace_context(nil, nil), do: nil
+  defp build_trace_context(trace_context, nil), do: trace_context
+
+  defp build_trace_context(trace_context, %PiEx.Tracing.Span{} = trace_span) do
+    trace_context =
+      case trace_context do
+        nil -> PiEx.Tracing.new_context()
+        context -> context
+      end
+
+    PiEx.Tracing.child_context(trace_context, trace_span)
   end
 
   # Collect events from the subagent, forward them to the parent server,
