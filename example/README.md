@@ -7,6 +7,7 @@ This project contains runnable demos for `PiEx.Agent` and `PiEx.DeepAgent`.
 - `Example.DeepAgentExample.run/0` — project analyst demo with built-in filesystem tools plus a custom `mix_test` tool
 - `Example.SkillsDemo.run/0` — skills-enabled deep agent demo using `example/skills/`
 - `Example.CompactionDemo.run/0` — auto-context-compaction demo with a tiny context window
+- `Example.LangSmithTracingDemo.run/0` — root-agent + subagent demo for exercising LangSmith tracing spans
 
 ## Running
 
@@ -17,6 +18,7 @@ mix deps.get
 mix run -e "Example.DeepAgentExample.run()"
 mix run -e "Example.SkillsDemo.run()"
 mix run -e "Example.CompactionDemo.run()"
+mix run -e "Example.LangSmithTracingDemo.run()"
 ```
 
 Set `OPENAI_API_KEY` first, or configure `:pi_ex, :openai` in `config/dev.secret.exs`.
@@ -35,3 +37,19 @@ model =
     }
   )
 ```
+
+## LangSmith tracing
+
+The tracing demo uses the host `:pi_ex` application's tracing config. You can add
+the LangSmith settings later in `config/dev.secret.exs`:
+
+```elixir
+config :pi_ex, enable_langsmith_tracing: true
+
+config :pi_ex, :langsmith,
+  api_key: "lsv2_pt_...",
+  project: "pi-ex-example"
+```
+
+If tracing is not configured yet, the demo still runs normally; it just won't
+send spans to LangSmith.

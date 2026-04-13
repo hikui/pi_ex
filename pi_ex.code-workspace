@@ -4,7 +4,10 @@
 			"path": "."
 		},
 		{
-			"path": "../pi-mono"
+			"path": "../claude-agent-sdk-python"
+		},
+		{
+			"path": "../langsmith-sdk"
 		}
 	],
 	"settings": {}

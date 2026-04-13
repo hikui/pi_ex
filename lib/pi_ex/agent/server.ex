@@ -24,9 +24,13 @@ defmodule PiEx.Agent.Server do
 
   alias PiEx.Agent.{Config, Compaction, Loop}
   alias PiEx.AI.ProviderParams
+  alias PiEx.Tracing
 
   defstruct [
     :config,
+    :base_trace_context,
+    :root_trace_span,
+    :compaction_trace_span,
     status: :idle,
     messages: [],
     subscribers: [],
@@ -142,16 +146,42 @@ defmodule PiEx.Agent.Server do
   def handle_call({:prompt, messages}, _from, state) do
     all_messages = state.messages ++ messages
     server_pid = self()
+    base_trace_context = state.config.trace_context || Tracing.new_context()
+
+    root_trace_span =
+      Tracing.start_span(base_trace_context,
+        name: root_trace_name(state.config),
+        type: :chain,
+        inputs: %{messages: all_messages},
+        metadata: %{
+          depth: state.config.depth,
+          agent_type: agent_type(state.config)
+        }
+      )
+
+    run_config =
+      state.config
+      |> Map.put(:trace_context, Tracing.child_context(base_trace_context, root_trace_span))
+      |> inject_run_agent_tool(server_pid)
 
     task =
       Task.Supervisor.async_nolink(PiEx.TaskSupervisor, fn ->
-        Loop.run(all_messages, state.config, server_pid)
+        Loop.run(all_messages, run_config, server_pid)
       end)
 
     # Monitor the task so we catch crashes
     Process.monitor(task.pid)
 
-    {:reply, :ok, %{state | status: :running, loop_task: task, messages: all_messages}}
+    {:reply, :ok,
+     %{
+       state
+       | status: :running,
+         loop_task: task,
+         messages: all_messages,
+         config: run_config,
+         base_trace_context: base_trace_context,
+         root_trace_span: root_trace_span
+     }}
   end
 
   @impl true
@@ -210,6 +240,7 @@ defmodule PiEx.Agent.Server do
   @impl true
   def handle_cast(:abort, %{loop_task: task} = state) do
     Task.shutdown(task, :brutal_kill)
+    state = fail_root_trace(state, "aborted", %{messages: state.messages})
     {:noreply, %{state | status: :idle, loop_task: nil}}
   end
 
@@ -217,7 +248,16 @@ defmodule PiEx.Agent.Server do
   def handle_info({:agent_event, event}, state) do
     state = apply_event(event, state)
     broadcast(state.subscribers, {:agent_event, event})
-    state = if match?({:agent_end, _}, event), do: maybe_start_compaction(state), else: state
+
+    state =
+      if match?({:agent_end, _}, event) do
+        state
+        |> maybe_start_compaction()
+        |> maybe_finish_root_trace(event)
+      else
+        state
+      end
+
     {:noreply, state}
   end
 
@@ -225,14 +265,20 @@ defmodule PiEx.Agent.Server do
   @impl true
   def handle_info({:compaction_done, new_messages}, state) do
     broadcast(state.subscribers, {:agent_event, {:compaction_end, hd(new_messages)}})
-    {:noreply, %{state | messages: new_messages, compaction_task: nil}}
+    Tracing.finish_span(state.compaction_trace_span, %{messages: new_messages})
+    state = finish_root_trace(state, %{messages: new_messages, compacted: true})
+
+    {:noreply,
+     %{state | messages: new_messages, compaction_task: nil, compaction_trace_span: nil}}
   end
 
   # Compaction failed
   @impl true
   def handle_info({:compaction_error, reason}, state) do
     broadcast(state.subscribers, {:agent_event, {:compaction_error, reason}})
-    {:noreply, %{state | compaction_task: nil}}
+    Tracing.fail_span(state.compaction_trace_span, reason, %{messages: state.messages})
+    state = finish_root_trace(state, %{messages: state.messages, compaction_error: reason})
+    {:noreply, %{state | compaction_task: nil, compaction_trace_span: nil}}
   end
 
   # Loop task completed normally (async_nolink sends a message with the result)
@@ -248,9 +294,12 @@ defmodule PiEx.Agent.Server do
       when task_pid == pid do
     if reason != :normal do
       broadcast(state.subscribers, {:agent_event, {:compaction_error, reason}})
+      Tracing.fail_span(state.compaction_trace_span, reason, %{messages: state.messages})
+      state = finish_root_trace(state, %{messages: state.messages, compaction_error: reason})
+      {:noreply, %{state | compaction_task: nil, compaction_trace_span: nil}}
+    else
+      {:noreply, %{state | compaction_task: nil}}
     end
-
-    {:noreply, %{state | compaction_task: nil}}
   end
 
   # Loop task crashed
@@ -259,9 +308,11 @@ defmodule PiEx.Agent.Server do
       when task != nil and task.pid == pid do
     if reason != :normal do
       broadcast(state.subscribers, {:agent_event, {:agent_error, reason}})
+      state = fail_root_trace(state, reason, %{messages: state.messages})
+      {:noreply, %{state | status: :idle, loop_task: nil}}
+    else
+      {:noreply, %{state | status: :idle, loop_task: nil}}
     end
-
-    {:noreply, %{state | status: :idle, loop_task: nil}}
   end
 
   @impl true
@@ -309,6 +360,14 @@ defmodule PiEx.Agent.Server do
     server_pid = self()
     compact_fn = config.compact_fn || (&Compaction.compact(&1, &2, &3, &4))
 
+    compaction_trace_span =
+      Tracing.start_span(config.trace_context,
+        name: "pi_ex.compaction",
+        type: :llm,
+        inputs: %{messages: messages, settings: config.compaction},
+        metadata: %{depth: config.depth}
+      )
+
     {:ok, task_pid} =
       Task.Supervisor.start_child(PiEx.TaskSupervisor, fn ->
         case compact_fn.(
@@ -324,15 +383,20 @@ defmodule PiEx.Agent.Server do
 
     monitor_ref = Process.monitor(task_pid)
     broadcast(state.subscribers, {:agent_event, :compaction_start})
-    %{state | compaction_task: {task_pid, monitor_ref}}
+
+    %{
+      state
+      | compaction_task: {task_pid, monitor_ref},
+        compaction_trace_span: compaction_trace_span
+    }
   end
 
   # Inject queue-polling hooks so the loop can call back into this GenServer
   defp inject_queue_hooks(%Config{} = config, server_pid) do
     %{
       config
-      | get_steering_messages: fn -> GenServer.call(server_pid, :get_steering_messages) end,
-        get_follow_up_messages: fn -> GenServer.call(server_pid, :get_follow_up_messages) end
+      | get_steering_messages: fn -> safe_queue_call(server_pid, :get_steering_messages) end,
+        get_follow_up_messages: fn -> safe_queue_call(server_pid, :get_follow_up_messages) end
     }
   end
 
@@ -347,5 +411,54 @@ defmodule PiEx.Agent.Server do
     else
       config
     end
+  end
+
+  defp maybe_finish_root_trace(state, {:agent_end, messages}) do
+    case state.compaction_task do
+      nil -> finish_root_trace(state, %{messages: messages})
+      {_pid, _ref} -> state
+    end
+  end
+
+  defp maybe_finish_root_trace(state, _event), do: state
+
+  defp finish_root_trace(%{root_trace_span: nil} = state, _outputs),
+    do: reset_trace_context(state)
+
+  defp finish_root_trace(state, outputs) do
+    Tracing.finish_span(state.root_trace_span, outputs)
+
+    state
+    |> Map.put(:root_trace_span, nil)
+    |> reset_trace_context()
+  end
+
+  defp fail_root_trace(%{root_trace_span: nil} = state, _reason, _outputs),
+    do: reset_trace_context(state)
+
+  defp fail_root_trace(state, reason, outputs) do
+    Tracing.fail_span(state.root_trace_span, reason, outputs)
+
+    state
+    |> Map.put(:root_trace_span, nil)
+    |> reset_trace_context()
+  end
+
+  defp reset_trace_context(%{base_trace_context: base_trace_context} = state) do
+    base_trace_context = base_trace_context || state.config.trace_context
+    config = %{state.config | trace_context: base_trace_context} |> inject_run_agent_tool(self())
+    %{state | config: config, base_trace_context: base_trace_context}
+  end
+
+  defp root_trace_name(%Config{depth: 0}), do: "pi_ex.agent"
+  defp root_trace_name(%Config{}), do: "pi_ex.subagent"
+
+  defp agent_type(%Config{depth: 0}), do: "root"
+  defp agent_type(%Config{}), do: "subagent"
+
+  defp safe_queue_call(server_pid, message) do
+    GenServer.call(server_pid, message)
+  catch
+    :exit, _reason -> []
   end
 end

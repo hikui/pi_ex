@@ -52,6 +52,36 @@ config :pi_ex, :litellm,
 
 Resolution order for API keys and base URLs: direct `PiEx.AI` call-time opts → model `provider_params` → environment variables → application config → hardcoded defaults.
 
+## LangSmith tracing
+
+Agent tracing is opt-in and isolated behind the internal `PiEx.Tracing` facade. In v1 it traces
+`PiEx.Agent` and `PiEx.DeepAgent` runs, including LLM turns, tool calls, subagents, and compaction.
+Standalone `PiEx.AI.stream/complete` calls are not traced.
+
+```elixir
+config :pi_ex, enable_langsmith_tracing: true
+
+config :pi_ex, :langsmith,
+  api_key: "lsv2_pt_...",
+  project: "pi-ex",
+  endpoint: "https://api.smith.langchain.com", # optional
+  workspace_id: "ws_...",                      # optional
+  tags: ["dev"],                               # optional
+  metadata: %{app: "pi_ex"}                    # optional
+```
+
+Supported environment variables:
+
+```bash
+export LANGSMITH_API_KEY="lsv2_pt_..."
+export LANGSMITH_PROJECT="pi-ex"
+export LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
+export LANGSMITH_WORKSPACE_ID="ws_..."
+```
+
+Resolution order for LangSmith settings: environment variables → `config :pi_ex, :langsmith`.
+Tracing stays disabled unless `config :pi_ex, enable_langsmith_tracing: true` is set.
+
 ## PiEx.AI — LLM streaming
 
 ```elixir
