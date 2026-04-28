@@ -34,7 +34,7 @@ defmodule PiEx.Agent.Loop do
 
   ### Tool execution
   - `{:tool_execution_start, call_id, tool_name, args}`
-  - `{:tool_execution_update, call_id, tool_name, args, partial_result}`
+  - `{:tool_execution_update, call_id, tool_name, args, event}`
   - `{:tool_execution_end, call_id, tool_name, result, is_error}`
   """
 

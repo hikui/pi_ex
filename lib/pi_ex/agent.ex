@@ -31,7 +31,8 @@ defmodule PiEx.Agent do
           "required" => ["city"]
         },
         label: "Get Weather",
-        execute: fn _id, %{"city" => city}, _opts ->
+        execute: fn _id, %{"city" => city}, opts ->
+          opts[:on_update].(%{type: :progress, message: "fetching weather"})
           {:ok, %{content: [%PiEx.AI.Content.TextContent{text: "Sunny in \#{city}"}], details: nil}}
         end
       }

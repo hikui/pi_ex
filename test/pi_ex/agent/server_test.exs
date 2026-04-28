@@ -95,6 +95,19 @@ defmodule PiEx.Agent.ServerTest do
     pid
   end
 
+  defp assert_receive_agent_event(match_fun, timeout \\ 3_000) do
+    receive do
+      {:agent_event, event} ->
+        if match_fun.(event) do
+          event
+        else
+          assert_receive_agent_event(match_fun, timeout)
+        end
+    after
+      timeout -> flunk("expected matching agent event")
+    end
+  end
+
   # Helper kept for future use if synchronous waiting is needed
   # defp wait_for_idle(server, timeout \ 3000) do ...
 
@@ -375,6 +388,115 @@ defmodule PiEx.Agent.ServerTest do
 
       assert_received {:agent_event, {:tool_execution_start, "call_1", "echo", _}}
       assert_received {:agent_event, {:tool_execution_end, "call_1", "echo", _, false}}
+    end
+
+    test "tool on_update events are broadcast to subscribers during execution" do
+      progress_event = %{type: :progress, message: "step 1 complete"}
+      args = %{"msg" => "hello"}
+
+      streaming_tool = %PiEx.Agent.Tool{
+        name: "streaming_echo",
+        description: "emits progress before replying",
+        parameters: %{},
+        label: "Streaming Echo",
+        execute: fn _id, _params, opts ->
+          on_update = Keyword.fetch!(opts, :on_update)
+          on_update.(progress_event)
+
+          {:ok, %{content: [%TextContent{text: "ok"}], details: nil}}
+        end
+      }
+
+      call_count = :counters.new(1, [])
+
+      pid =
+        start_agent!(%Config{
+          model: Model.new("test-model", "openai"),
+          tools: [streaming_tool],
+          stream_fn: fn _m, _ctx, _o ->
+            :counters.add(call_count, 1, 1)
+
+            case :counters.get(call_count, 1) do
+              1 -> tool_call_stream("call_1", "streaming_echo", args)
+              _ -> text_stream("done")
+            end
+          end
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert {:tool_execution_start, "call_1", "streaming_echo", ^args} =
+               assert_receive_agent_event(
+                 &match?({:tool_execution_start, "call_1", "streaming_echo", ^args}, &1)
+               )
+
+      assert {:tool_execution_update, "call_1", "streaming_echo", ^args, ^progress_event} =
+               assert_receive_agent_event(
+                 &match?(
+                   {:tool_execution_update, "call_1", "streaming_echo", ^args, ^progress_event},
+                   &1
+                 )
+               )
+
+      assert {:tool_execution_end, "call_1", "streaming_echo", _, false} =
+               assert_receive_agent_event(
+                 &match?({:tool_execution_end, "call_1", "streaming_echo", _, false}, &1)
+               )
+
+      assert_receive {:agent_event, {:agent_end, _}}, 5_000
+    end
+
+    test "tool on_update events are broadcast before a tool error result" do
+      progress_event = {:phase, :started}
+
+      failing_tool = %PiEx.Agent.Tool{
+        name: "failing_stream",
+        description: "emits progress before failing",
+        parameters: %{},
+        label: "Failing Stream",
+        execute: fn _id, _params, opts ->
+          opts
+          |> Keyword.fetch!(:on_update)
+          |> then(& &1.(progress_event))
+
+          {:error, "boom"}
+        end
+      }
+
+      call_count = :counters.new(1, [])
+
+      pid =
+        start_agent!(%Config{
+          model: Model.new("test-model", "openai"),
+          tools: [failing_tool],
+          stream_fn: fn _m, _ctx, _o ->
+            :counters.add(call_count, 1, 1)
+
+            case :counters.get(call_count, 1) do
+              1 -> tool_call_stream("call_1", "failing_stream", %{})
+              _ -> text_stream("done")
+            end
+          end
+        })
+
+      Server.subscribe(pid)
+      Server.prompt(pid, "go")
+
+      assert {:tool_execution_update, "call_1", "failing_stream", %{}, ^progress_event} =
+               assert_receive_agent_event(
+                 &match?(
+                   {:tool_execution_update, "call_1", "failing_stream", %{}, ^progress_event},
+                   &1
+                 )
+               )
+
+      assert {:tool_execution_end, "call_1", "failing_stream", _, true} =
+               assert_receive_agent_event(
+                 &match?({:tool_execution_end, "call_1", "failing_stream", _, true}, &1)
+               )
+
+      assert_receive {:agent_event, {:agent_end, _}}, 5_000
     end
 
     test "waits for a slow tool result without agent-level timeout config" do

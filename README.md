@@ -174,7 +174,8 @@ weather_tool = %PiEx.Agent.Tool{
     "required" => ["city"]
   },
   label: "Get Weather",
-  execute: fn _id, %{"city" => city}, _opts ->
+  execute: fn _id, %{"city" => city}, opts ->
+    opts[:on_update].(%{type: :progress, message: "fetching weather"})
     {:ok, %{content: [%PiEx.AI.Content.TextContent{text: "Sunny in #{city}"}], details: nil}}
   end
 }
@@ -300,7 +301,8 @@ my_tool = %PiEx.Agent.Tool{
   description: "Run the project test suite and return output.",
   parameters: %{"type" => "object", "properties" => %{}, "required" => []},
   label: "Run Tests",
-  execute: fn _id, _params, _opts ->
+  execute: fn _id, _params, opts ->
+    opts[:on_update].(%{type: :progress, message: "starting mix test"})
     {output, _} = System.cmd("mix", ["test"], cd: "/path/to/project")
     {:ok, %{content: [%PiEx.AI.Content.TextContent{text: output}], details: nil}}
   end
@@ -327,7 +329,7 @@ config = %PiEx.DeepAgent.Config{
 | `{:message_update, msg, stream_event}` | Message streaming update |
 | `{:message_end, msg}` | Message streaming complete |
 | `{:tool_execution_start, id, name, args}` | Tool call started |
-| `{:tool_execution_update, id, name, args, partial}` | Tool call progress |
+| `{:tool_execution_update, id, name, args, event}` | Tool-injected progress or stream event from `opts[:on_update]` |
 | `{:tool_execution_end, id, name, result, is_error}` | Tool call complete |
 
 ## Subagents — direct orchestration

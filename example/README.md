@@ -7,6 +7,7 @@ This project contains runnable demos for `PiEx.Agent` and `PiEx.DeepAgent`.
 - `Example.DeepAgentExample.run/0` — project analyst demo with built-in filesystem tools plus a custom `mix_test` tool
 - `Example.SkillsDemo.run/0` — skills-enabled deep agent demo using `example/skills/`
 - `Example.CompactionDemo.run/0` — auto-context-compaction demo with a tiny context window
+- `Example.ToolStreamEventsDemo.run/0` — offline demo showing tool-injected stream events reaching subscribers
 - `Example.LangSmithTracingDemo.run/0` — root-agent + subagent demo for exercising LangSmith tracing spans
 
 ## Running
@@ -18,10 +19,13 @@ mix deps.get
 mix run -e "Example.DeepAgentExample.run()"
 mix run -e "Example.SkillsDemo.run()"
 mix run -e "Example.CompactionDemo.run()"
+mix run -e "Example.ToolStreamEventsDemo.run()"
 mix run -e "Example.LangSmithTracingDemo.run()"
 ```
 
 Set `OPENAI_API_KEY` first, or configure `:pi_ex, :openai` in `config/dev.secret.exs`.
+
+`Example.ToolStreamEventsDemo.run/0` is fully local and does not require an API key.
 
 The demos use the model-centric provider params API. For example:
 

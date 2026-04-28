@@ -10,6 +10,21 @@ defmodule PiEx.Agent.Tool do
   - `:execute` — `(call_id, params, opts) -> {:ok, result} | {:error, reason}`
     where `result` is `%{content: [TextContent | ImageContent], details: term()}`
 
+  ## Execution options
+
+  The agent passes a keyword list to `:execute`. Tool authors can use
+  `opts[:on_update]` to inject progress or stream events while the tool is
+  running. Each payload is forwarded to subscribers as:
+
+      {:agent_event, {:tool_execution_update, call_id, tool_name, args, payload}}
+
+  The payload can be any Elixir term:
+
+      execute: fn _call_id, _params, opts ->
+        opts[:on_update].(%{type: :progress, message: "step 1 complete"})
+        {:ok, %{content: [%PiEx.AI.Content.TextContent{text: "Done"}], details: nil}}
+      end
+
   ## Example
 
       %PiEx.Agent.Tool{
@@ -35,13 +50,18 @@ defmodule PiEx.Agent.Tool do
   defstruct [:name, :description, :parameters, :label, :execute]
 
   @type result :: %{content: [TextContent.t() | ImageContent.t()], details: term()}
+  @type update_callback :: (term() -> term())
+  @type execute_opts :: [
+          on_update: update_callback(),
+          trace_span: PiEx.Tracing.Span.t()
+        ]
 
   @type t :: %__MODULE__{
           name: String.t(),
           description: String.t(),
           parameters: map(),
           label: String.t(),
-          execute: (String.t(), map(), keyword() -> {:ok, result()} | {:error, String.t()})
+          execute: (String.t(), map(), execute_opts() -> {:ok, result()} | {:error, String.t()})
         }
 
   @doc "Convert an AgentTool to a plain `PiEx.AI.Tool` for passing to the LLM context."
