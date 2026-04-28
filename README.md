@@ -184,6 +184,53 @@ config = %PiEx.Agent.Config{model: model, tools: [weather_tool]}
 {:ok, agent} = PiEx.Agent.start(config)
 ```
 
+### Steering and follow-ups
+
+Use `steer/2` while an agent is running to inject one or more messages into the
+next turn. This is useful for live course corrections while the model is still
+working, especially during tool-heavy runs.
+
+```elixir
+alias PiEx.AI.Message
+
+{:ok, agent} = PiEx.Agent.start(config)
+PiEx.Agent.subscribe(agent)
+
+:ok = PiEx.Agent.prompt(agent, "Draft a migration plan for this repository.")
+
+:ok =
+  PiEx.Agent.steer(
+    agent,
+    Message.user("Focus on low-risk steps first and call out anything irreversible.")
+  )
+```
+
+Use `follow_up/2` to queue messages that should be appended after the agent would
+otherwise stop. The queued messages restart the agent loop with the existing
+conversation history.
+
+```elixir
+alias PiEx.AI.Message
+
+{:ok, agent} = PiEx.Agent.start(config)
+PiEx.Agent.subscribe(agent)
+
+:ok = PiEx.Agent.prompt(agent, "Inspect the project and summarize the main risks.")
+
+:ok =
+  PiEx.Agent.follow_up(
+    agent,
+    [
+      Message.user("Now turn that into a prioritized checklist."),
+      Message.user("Include a one-sentence rationale for each item.")
+    ]
+  )
+
+receive do
+  {:agent_event, {:agent_end, messages}} -> messages
+end
+```
+
 ### Agent API
 
 | Function | Description |
